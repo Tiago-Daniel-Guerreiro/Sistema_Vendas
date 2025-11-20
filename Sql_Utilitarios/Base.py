@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from enum import Enum
 import mysql.connector
 import re
-
 # Dados Base 
 class TipoDadoSQLBase(Enum): 
     """ Tipos de dados SQL. """
@@ -19,7 +18,9 @@ class TipoDadoSQLBase(Enum):
 
 class TipoSQL:
     """ Representa um tipo de dado SQL, incluindo seus parâmetros. """
-    def __init__(self, tipo_base: TipoDadoSQLBase, tamanho: int = None, precisao: int = None, escala: int = None):
+    def __init__(self, tipo_base: TipoDadoSQLBase, tamanho: int = -1, precisao: int = -1, escala: int = -1):
+        if tipo_base is None:
+            raise ValueError("O tipo base (TipoDadoSQLBase) é obrigatório.")
         self._tipo_base = tipo_base
         self._tamanho = tamanho
         self._precisao = precisao
@@ -29,10 +30,10 @@ class TipoSQL:
 
     def _validar(self):
         """Garante que os parâmetros foram fornecidos para o tipo base corretamente."""
-        if self._tipo_base == TipoDadoSQLBase.Varchar and self._tamanho is None:
+        if self._tipo_base == TipoDadoSQLBase.Varchar and self._tamanho is None and self._tamanho == -1:
             raise ValueError("O tipo VARCHAR requer o parâmetro 'tamanho'.")
         
-        if self._tipo_base == TipoDadoSQLBase.Decimal and (self._precisao is None or self._escala is None):
+        if self._tipo_base == TipoDadoSQLBase.Decimal and (self._precisao is None or self._escala is None) and (self._escala == -1 or self._precisao == -1):
             raise ValueError("O tipo DECIMAL requer os parâmetros 'precisao' e 'escala'.")
 
     def __str__(self) -> str:
@@ -66,6 +67,18 @@ class TipoSQL:
     @classmethod
     def timestamp(cls) -> "TipoSQL":
         return cls(TipoDadoSQLBase.Timestamp)
+    
+    @classmethod
+    def inteiro_grande(cls) -> "TipoSQL":
+        return cls(TipoDadoSQLBase.Inteiro_Grande)
+    
+    @classmethod
+    def Data(cls) -> "TipoSQL":
+        return cls(TipoDadoSQLBase.Data)
+    
+    @classmethod
+    def Booleano(cls) -> "TipoSQL":
+        return cls(TipoDadoSQLBase.Booleano)
 
 class RestricaoColuna(Enum):
     """
@@ -98,7 +111,7 @@ class RestricaoColuna(Enum):
         
         # Usa a conversão "normal" para todos os outros tipos (ExpressaoSQL, int, float, bool, etc.),
         return str(valor) # A classe ExpressaoSQL tem um str proprio então não precisa de uma verificação adicional
-   
+
 class DirecaoOrdenacao(Enum):
     """ Direção da ordenação dos resultados em uma consulta SELECT. """
     Ascendente = "ASC"
@@ -181,8 +194,10 @@ class Conjunto_De_Dados_Para_Inserir:
 # Scripts SQL e Validação
 class Script_SQL:
     """ Representa um parte do script SQL, contendo o texto e os parâmetros associados. """
-    def __init__(self, sql: str = "", params: List[Any] = None):
+    def __init__(self, sql: str = "", params: List[Any] = []):
         """ Inicializa o script SQL. """
+        if sql is None or sql == []:
+            sql = ""
         self.__sql: str = sql.strip() # Remove espaços em branco no início/fim
         # Garante que params=None resulta numa lista vazia em vez de tentar iterar None
         self.__params: List[Any] = list(params) if params is not None else []
@@ -200,7 +215,7 @@ class Script_SQL:
     def __str__(self) -> str:
         """Representação simples, retorna apenas o SQL."""
         return self.__sql
-      
+
     def __eq__(self, outro: object) -> bool:
         """Verifica se dois objetos Script_SQL são iguais (mesmo SQL e mesmos parâmetros)."""
         if not isinstance(outro, Script_SQL):
@@ -332,7 +347,7 @@ class FormatadorSQL:
     def identificador(name: str) -> str:
         """Formata um identificador (simples ou pontuado) envolvendo cada parte com 'backticks'."""
         if name is None:
-            return name
+            raise ValueError("O nome do identificador não pode ser None.")
 
         partes = name.split('.')
         partes_escapadas = []
@@ -604,8 +619,7 @@ class ChavePrimaria:
     def __str__(self) -> str:
         return self.construir_sql().sql
 
-# Alias para manter a assinatura sugerida pelo utilizador
-Chave_Primaria = ChavePrimaria
+Chave_Primaria = ChavePrimaria # dá para usar das 2 formas
 
 class Coluna:
     """ Define uma coluna de uma tabela, incluindo seu nome, tipo, restrições e parâmetros. """
@@ -613,14 +627,14 @@ class Coluna:
         self,
         nome: str,
         tipo_sql: TipoSQL,
-        restricoes: List[RestricaoColuna] = None,
+        restricoes: List[RestricaoColuna] = [],
         valor_padrao: Any = None
         ):
         """ Inicializa a coluna e valida a consistência dos parâmetros fornecidos. """
 
         self.nome = nome
         self.tipo_sql = tipo_sql
-        self.restricoes = restricoes or []
+        self.restricoes = restricoes
         self.valor_padrao = valor_padrao
 
     def construir_sql_criar(self) -> Script_SQL:
@@ -818,9 +832,7 @@ class BaseDeDados:
         self._verificador_seguranca.validar(Script_SQL(script_final))  # Valida o script completo antes de retornar
 
         return script_final
-
 # Cláusulas SQL para consultas e comandos
-
 class ClausulaBase(ABC):
     """
     Classe base abstrata para todos os componentes que representam uma cláusula SQL.
@@ -946,7 +958,7 @@ class ClausulaOrderBy(ClausulaBase):
 class ClausulaLimit(ClausulaBase):
     """Gere e monta a cláusula LIMIT."""
     def __init__(self):
-        self._limite: int = None
+        self._limite: Optional[int] = None
 
     def definir(self, quantidade: int):
         """Define o número máximo de registos a retornar."""
@@ -1018,7 +1030,6 @@ class ClausulaSet(ClausulaBase):
         return bool(self._definicoes)
 
 # Construtores de SQL para as 3 operações principais: SELECT, UPDATE, DELETE
-
 class ConstrutorBase(ABC):
     """
     Classe base abstrata para construtores de queries (SELECT, UPDATE, DELETE).
@@ -1532,7 +1543,7 @@ class TesteSQL:
                     .selecionar("clientes.nome", "pedidos.valor_total", "pedidos.data_pedido")
                     .ordenar_por("clientes.nome")
                 ).gerar_script()
-                
+
                 resultados_finais = executor.consultar(script_select)
                 self.exibir_resultados("Consulta Final: Clientes e Pedidos", script_select, resultados_finais)
 

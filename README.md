@@ -17,21 +17,23 @@ O servidor é o núcleo do sistema, responsável por armazenar, validar e proces
 comerciais.
 
 1. Autenticação
-• Recebe credenciais do cliente (utilizador/senha).
-• Verifica se o utilizador é admin, vendedor, cliente.
-• Diferenciar permissões (apenas admin pode adicionar produtos).
+
+- Recebe credenciais do cliente (utilizador/senha).
+- Verifica se o utilizador é admin, vendedor, cliente.
+- Diferenciar permissões (apenas admin pode adicionar produtos).
 
 2. Gestão de Produtos
-• Adicionar produto:
-o Recebe dados (nome, categoria, preço, stock, descrição).
-o Retorna PRODUTO_ADICIONADO ou ERRO_DUPLICADO.
-• Atualizar produto:
-o Permite alterar preço, stock ou descrição.
-o Retorna ATUALIZACAO_OK ou PRODUTO_NAO_ENCONTRADO.
-• Remover produto:
-o Elimina produto do catálogo.
-o Retorna PRODUTO_REMOVIDO.
-• Listar produtos:
+
+- Adicionar produto:
+- Recebe dados (nome, categoria, preço, stock, descrição).
+- Retorna PRODUTO_ADICIONADO ou ERRO_DUPLICADO.
+- Atualizar produto:
+- Permite alterar preço, stock ou descrição.
+- Retorna ATUALIZACAO_OK ou PRODUTO_NAO_ENCONTRADO.
+- Remover produto:
+- Elimina produto do catálogo.
+- Retorna PRODUTO_REMOVIDO.
+- Listar produtos:
 
 o Envia a lista completa ou filtrada (por categoria, preço, disponibilidade).
 
@@ -54,19 +56,20 @@ Funções do Cliente
 • Envia utilizador/senha para o servidor.
 • Recebe resultado e ajusta o acesso conforme o tipo de utilizador.
 • Se o utilizador não possuir credenciais, é necessário fazer o registo na aplicação.
+
 2. Gestão de produtos (para admin ou vendedores)
 • Adicionar novo produto (nome, preço, categoria, stock).
 • Atualizar ou remover produtos.
+
 3. Realizar vendas (para vendedores (se o cliente estiver presencialmente na loja) ou clientes)
 • Selecionar produto e quantidade.
 • Enviar pedido de venda ao servidor.
 • Receber confirmação e total da compra.
+
 4. Excluir produto (para admin)
 • Solicita ao usuário o ID do produto.
 • Envia pedido ao servidor e exibe resposta.
-5. Atualizar consulta
-• Permite alterar data/hora de uma consulta existente.
-• Envia pedido UPDATE_CONSULTA.
+
 Critérios de avaliação:
 • Cada aluno será avaliado individualmente.
 • Nota = (Nota do Projeto * 0,75) + (Perguntas técnicas sobre projeto em exposição * 0,15) +
@@ -83,3 +86,6 @@ problema. Nota Final = Nota - (Nota * 0,5)
 para a realização do projeto, apenas o aluno que não estiver participando será penalizado.
 Nota Final = Nota - (Nota * 0,5)
 • Total de horas para o desenvolvimento: 5 horas
+
+
+Basicamente o código que está no projeto é o código da atividade 1 que podemos nos basear, e um código que eu tinha feito que serve para criar o sql com python para simplificar o processo.
