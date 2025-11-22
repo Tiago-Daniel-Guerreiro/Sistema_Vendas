@@ -7,7 +7,7 @@ class Produto:
         bd.cursor.execute(f"SELECT id FROM {tabela} WHERE {coluna} = %s", (valor,))
 
         resultado = bd.cursor.fetchone()
-        if resultado: 
+        if resultado is not None: 
             return resultado['id']
         
         bd.cursor.execute(f"INSERT INTO {tabela} ({coluna}) VALUES (%s)", (valor,))
@@ -28,9 +28,10 @@ class Produto:
 
             bd.cursor.execute(sql, (store_id, name_id, categoria_id, desc_id, preco, stock))
             bd.conn.commit()
+            
             return Mensagem.ADICIONADO
         except Exception:
-            return Mensagem.ERRO_DUPLICADO # Quando o atributo
+            return Mensagem.ERRO_DUPLICADO
 
     @staticmethod
     def listar_todos(bd, filtros=""):
@@ -54,7 +55,7 @@ class Produto:
         return resultado
 
     @staticmethod
-    def verificar_alertas(bd):
+    def verificar_stock_baixo(bd):
         bd.cursor.execute("""
             SELECT p.id, n.nome, p.stock, s.nome as loja
             FROM products p JOIN product_names n ON p.product_name_id = n.id 

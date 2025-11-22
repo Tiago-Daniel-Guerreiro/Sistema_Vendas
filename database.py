@@ -89,7 +89,7 @@ class DatabaseManager:
             buyer_user_id INT,
             store_id INT,
             seller_user_id INT NULL,
-            status ENUM('pendente', 'confirmada', 'concluida') DEFAULT 'pendente',
+            status ENUM('pendente', 'concluida') DEFAULT 'pendente',
             total_price DECIMAL(10,2) DEFAULT 0,
             order_date DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (buyer_user_id) REFERENCES users(id),
@@ -116,7 +116,7 @@ class DatabaseManager:
             else:
                 raise Exception("Database connection is not established.")
 
-        for q in queries:
-            self.cursor.execute(q)
+        for querie in queries:
+            self.cursor.execute(querie)
         if self.conn:
             self.conn.commit()
