@@ -86,6 +86,3 @@ problema. Nota Final = Nota - (Nota * 0,5)
 para a realização do projeto, apenas o aluno que não estiver participando será penalizado.
 Nota Final = Nota - (Nota * 0,5)
 • Total de horas para o desenvolvimento: 5 horas
-
-
-Basicamente o código que está no projeto é o código da atividade 1 que podemos nos basear, e um código que eu tinha feito que serve para criar o sql com python para simplificar o processo.
