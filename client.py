@@ -3,7 +3,6 @@ import socket
 import os
 
 class Colors:
-    """Cores para terminal"""
     HEADER = '\033[95m'
     BLUE = '\033[94m'
     CYAN = '\033[96m'
@@ -15,7 +14,6 @@ class Colors:
     UNDERLINE = '\033[4m'
 
 def clear_screen():
-    """Limpa a tela"""
     os.system('cls')
 
 def send_command(comando_json, host='127.0.0.1', port=5000, timeout=5):
@@ -55,7 +53,7 @@ def print_warning(message: str):
     print(f"{Colors.YELLOW}Aviso - {message}{Colors.Default}")
 
 def print_info(message: str):
-    print(f"{Colors.CYAN}ℹ {message}{Colors.Default}")
+    print(f"{Colors.CYAN}info - {message}{Colors.Default}")
 
 def print_menu_option(number: str, description: str):
     print(f"  {number}) {description}")
@@ -63,7 +61,7 @@ def print_menu_option(number: str, description: str):
 def input_prompt(prompt: str) -> str:
     return input(f"{Colors.BLUE}{prompt}{Colors.Default}").strip()
 
-def input_prompt_seguro(prompt: str) -> str:
+def input_prompt_seguro(prompt: str):
     import getpass
     return getpass.getpass(f"{Colors.BLUE}{prompt}{Colors.Default}").strip()
 
@@ -107,7 +105,7 @@ class MenuManager:
         try:
             # Se está logado, enviar credenciais para obter comandos autenticados
             if self.session.is_logged_in():
-                res = send_command({
+                resultado = send_command({
                     'action': 'help',
                     'params': {
                         'username': self.session.username,
@@ -145,7 +143,7 @@ class MenuManager:
         return opcao
 
     def menu_principal(self):
-        # Verificar conexão ao iniciar (com retry)
+        # Verificar conexão ao iniciar
         while True:
             clear_screen()
             print_header("Sistema de Vendas")
@@ -239,7 +237,7 @@ class MenuManager:
                 opcao_num += 1
                 
                 # Mudar para Admin (se disponível no servidor)
-                if any('promover_para_admin' in self.available_commands.get(cat, []) for cat in self.available_commands):
+                if any('promover_para_admin' in self.available_commands.get(categoria, []) for categoria in self.available_commands):
                     opcoes.append("Mudar para Admin")
                     opcao_map[str(opcao_num)] = 'promover_para_admin'
                     opcao_num += 1
@@ -447,7 +445,6 @@ class MenuManager:
         input("Pressione ENTER...")
 
     def registar_cliente(self):
-        """Registar nova conta de cliente"""
         clear_screen()
         print_header("Registar Conta")
         
@@ -484,7 +481,6 @@ class MenuManager:
         input("Pressione ENTER...")
 
     def alterar_senha(self):
-        """Alterar password do utilizador logado"""
         clear_screen()
         print_header("Alterar Senha")
         
@@ -532,7 +528,6 @@ class MenuManager:
         input("Pressione ENTER...")
 
     def promover_para_admin(self):
-        """Promove o utilizador logado para admin"""
         clear_screen()
         print_header("Mudar para Admin")
         
@@ -576,7 +571,6 @@ class MenuManager:
 
     # Funções de Compras
     def listar_produtos(self):
-        """Lista todos os produtos"""
         clear_screen()
         print_header("LISTA DE PRODUTOS")
         
@@ -597,7 +591,6 @@ class MenuManager:
         input("Pressione ENTER...")
 
     def _print_product(self, product):
-        """Formata e imprime um produto"""
         print(f"\n{Colors.BOLD}ID: {Colors.Default}{product['id']}")
         print(f"{Colors.BOLD}Nome:{Colors.Default} {product['nome']}")
         print(f"{Colors.BOLD}Categoria:{Colors.Default} {product['categoria']}")
@@ -608,7 +601,6 @@ class MenuManager:
         print("\n")
 
     def comprar_produto(self):
-        """Compra um produto"""
         clear_screen()
         print_header("Produtos")
         

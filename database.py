@@ -120,3 +120,6 @@ class DatabaseManager:
             self.cursor.execute(querie)
         if self.conn:
             self.conn.commit()
+
+db = DatabaseManager()
+db.connect()

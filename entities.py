@@ -71,40 +71,40 @@ class Produto:
         if not resultado:
             return Mensagem.NAO_ENCONTRADO
 
-        campos, vals = [], []
-        if novo_preco:
+        campos, valores = [], []
+        if novo_preco is not None:
             campos.append("preco=%s")
-            vals.append(float(novo_preco))
+            valores.append(float(novo_preco))
 
-        if novo_stock:
+        if novo_stock is not None:
             campos.append("stock=%s")
-            vals.append(int(novo_stock))
+            valores.append(int(novo_stock))
 
-        if nova_descricao:
+        if nova_descricao is not None:
             desc_id = Produto._get_or_create_id(bd, "descriptions", "texto", nova_descricao)
             campos.append("description_id=%s")
-            vals.append(desc_id)
+            valores.append(desc_id)
             
-        if nova_categoria:
+        if nova_categoria is not None:
             categoria_id = Produto._get_or_create_id(bd, "categories", "nome", nova_categoria)
             campos.append("category_id=%s")
-            vals.append(categoria_id)
+            valores.append(categoria_id)
 
-        if novo_id_da_loja:
+        if novo_id_da_loja is not None:
             if Vendedor.verificar_loja_valida(bd, novo_id_da_loja) is False:
                 return Mensagem.LOJA_NAO_ENCONTRADA
             
             campos.append("store_id=%s")
-            vals.append(novo_id_da_loja)
+            valores.append(novo_id_da_loja)
 
         if not campos: # Se não há campos para atualizar
             return Mensagem.ATUALIZADO
         
-        vals.append(id_produto)
-        
+        valores.append(id_produto)
+
         # Atualiza os campos necessários
         try:
-            bd.cursor.execute(f"UPDATE products SET {','.join(campos)} WHERE id=%s", tuple(vals))
+            bd.cursor.execute(f"UPDATE products SET {','.join(campos)} WHERE id=%s", tuple(valores))
             bd.conn.commit()
             
             if bd.cursor.rowcount > 0:
@@ -113,6 +113,26 @@ class Produto:
             pass
 
         return Mensagem.NAO_ENCONTRADO
+    
+    @staticmethod
+    def remover_produto(bd, id_produto):
+        try:
+            # Verifica se o produto existe
+            bd.cursor.execute("SELECT id FROM products WHERE id=%s", (id_produto,))
+            if not bd.cursor.fetchone():
+                return Mensagem.NAO_ENCONTRADO
+            
+            # Remove o produto
+            bd.cursor.execute("DELETE FROM products WHERE id=%s", (id_produto,))
+            bd.conn.commit()
+            
+            if bd.cursor.rowcount > 0:
+                return Mensagem.REMOVIDO
+
+            return Mensagem.NAO_ENCONTRADO
+        except Exception:
+            bd.conn.rollback()
+            return Mensagem.ERRO_GENERICO
 
 # Utilizadores
 class User:
@@ -130,16 +150,16 @@ class User:
         resultado = self.bd.cursor.fetchone()
         if resultado:
             self.username = resultado['username']
-            self.cargo = resultado['cargo_type']
+            self.cargo = resultado['cargo']
             self.store_id = resultado['store_id']
 
     @staticmethod
     def login(bd, username, password):
-        sql = "SELECT id, cargo_type FROM users WHERE username = %s AND password = %s"
+        sql = "SELECT id, cargo FROM users WHERE username = %s AND password = %s"
         bd.cursor.execute(sql, (username, password))
         resultado = bd.cursor.fetchone()
         if resultado:
-            cargo = resultado['cargo_type']
+            cargo = resultado['cargo']
 
             match cargo: # match para limitar o cargo ás classes existentes e facilitar a leitura
                 case 'admin':
@@ -154,7 +174,7 @@ class Cliente(User):
     @staticmethod
     def registar(bd, username, password):
         try:
-            sql = "INSERT INTO users (username, password, cargo_type) VALUES (%s, %s, 'cliente')"
+            sql = "INSERT INTO users (username, password, cargo) VALUES (%s, %s, 'cliente')"
             bd.cursor.execute(sql, (username, password))
             bd.conn.commit()
             return Mensagem.UTILIZADOR_CRIADO
@@ -177,17 +197,17 @@ class Cliente(User):
         try:
             for product_id, quantidade in itens.items():
                 self.bd.cursor.execute("SELECT stock, preco, store_id FROM products WHERE id = %s", (product_id,))
-                prod = self.bd.cursor.fetchone()
+                product = self.bd.cursor.fetchone()
 
-                if not prod or prod['stock'] < quantidade:
+                if not product or product['stock'] < quantidade:
                     return Mensagem.STOCK_INSUFICIENTE
 
                 if loja_pedido is None: # Primeiro produto
-                    loja_pedido = prod['store_id']
-                elif loja_pedido != prod['store_id']: # Verifica se todos os produtos são da mesma loja
+                    loja_pedido = product['store_id']
+                elif loja_pedido != product['store_id']: # Verifica se todos os produtos são da mesma loja
                     return Mensagem.ERRO_PROCESSAMENTO
 
-                unit_price = float(prod['preco'])
+                unit_price = float(product['preco'])
                 produtos_info.append((product_id, quantidade, unit_price))
                 total_price += unit_price * quantidade
 
@@ -221,14 +241,14 @@ class Cliente(User):
             JOIN stores ON orders.store_id = stores.id
             WHERE orders.buyer_user_id = %s
             ORDER BY orders.order_date DESC
-        """
+        """ # Desc = Data por ordem Descresente
 
         self.bd.cursor.execute(sql, (self.id,)) # "," pois é uma tupla
         resultado = self.bd.cursor.fetchall() 
 
-        for resultado_linha in resultado: # Edita dentro do proprio objeto resultado sem criar um novo objeto
-            resultado_linha['unit_price'] = float(resultado_linha['unit_price'])
-            resultado_linha['order_date'] = str(resultado_linha['order_date'])
+        for resultado in resultado: # Edita dentro do proprio objeto resultado sem criar um novo objeto
+            resultado['unit_price'] = float(resultado['unit_price'])
+            resultado['order_date'] = str(resultado['order_date'])
 
         return resultado
 
@@ -239,7 +259,7 @@ class Vendedor(Cliente):
             return Mensagem.LOJA_NAO_ENCONTRADA
 
         try:
-            sql = "INSERT INTO users (username, password, cargo_type, store_id) VALUES (%s, %s, 'vendedor', %s)"
+            sql = "INSERT INTO users (username, password, cargo, store_id) VALUES (%s, %s, 'vendedor', %s)"
             bd.cursor.execute(sql, (username, password, store_id))
             bd.conn.commit()
             return Mensagem.UTILIZADOR_CRIADO
@@ -247,15 +267,16 @@ class Vendedor(Cliente):
             return Mensagem.UTILIZADOR_JA_EXISTE
         
     def atualizar_produto(self, id_produto, novo_preco=None, novo_stock=None, nova_descricao=None, nova_categoria=None):
-        resultado_verificacao = self._verificar_permissao_vendedor(id_produto)
+        resultado_verificacao = self._verificar_pedido_permissao_vendedor(id_produto)
         if resultado_verificacao is not None:
             return resultado_verificacao
         
-        # Chamar método estático da classe Produto
+        # Nunca vai passar um novo id de loja pois o vendedor apenas pode editar os produtos da sua propria loja
+        # Pois não faria sentido mudar a loja do produto pois ele não tem permissão
         return Produto.atualizar_produto(self.bd, id_produto, novo_preco, novo_stock, nova_descricao, nova_categoria)
 
     def concluir_pedido(self, order_id):
-        resultado_verificacao = self._verificar_permissao_vendedor(order_id, verificar_pedido_status=True)
+        resultado_verificacao = self._verificar_pedido_permissao_vendedor(order_id, verificar_pedido_status=True)
         if resultado_verificacao is not None:
             return resultado_verificacao
 
@@ -272,12 +293,11 @@ class Vendedor(Cliente):
             return Mensagem.ERRO_PROCESSAMENTO
     
     def listar_pedidos(self, filtro_status=None):
-        """Lista todos os pedidos da loja do vendedor com filtro opcional por status"""
         try:
-            if filtro_status and filtro_status not in ['pendente', 'confirmada', 'concluida']:
+            if filtro_status and filtro_status not in ['pendente', 'concluida']:
                 return []
             
-            if filtro_status:
+            if filtro_status is not None:
                 sql = """
                     SELECT o.id, o.order_date, u.username as cliente, o.total_price, o.status
                     FROM orders o
@@ -286,7 +306,7 @@ class Vendedor(Cliente):
                     ORDER BY o.order_date DESC
                 """
                 self.bd.cursor.execute(sql, (self.store_id, filtro_status))
-            else:
+            else: # Sem o filtro
                 sql = """
                     SELECT o.id, o.order_date, u.username as cliente, o.total_price, o.status
                     FROM orders o
@@ -297,16 +317,17 @@ class Vendedor(Cliente):
                 self.bd.cursor.execute(sql, (self.store_id,))
             
             resultado = self.bd.cursor.fetchall()
+
             for linha in resultado:
+                linha['total_price'] = float(linha['total_price']) 
                 linha['order_date'] = str(linha['order_date'])
-                linha['total_price'] = float(linha['total_price'])
-            
+
             return resultado
         except Exception:
             return []
         
-    def _verificar_permissao_vendedor(self, order_id, verificar_pedido_status=False):
-        # Vendedor confirma um pedido pendente da sua loja
+    def _verificar_pedido_permissao_vendedor(self, order_id, verificar_pedido_status=False):
+        # Selecionar os produtos que estão na mesma loja do que o vendedor
         self.bd.cursor.execute("SELECT store_id, status FROM orders WHERE id=%s", (order_id,))
         resultado = self.bd.cursor.fetchone()
 
@@ -316,7 +337,7 @@ class Vendedor(Cliente):
         if resultado['store_id'] != self.store_id:
             return Mensagem.ERRO_PERMISSAO
 
-        if verificar_pedido_status and resultado['status'] != 'pendente':
+        if verificar_pedido_status is not None and resultado['status'] != 'pendente':
             return Mensagem.ERRO_PROCESSAMENTO
 
         return None # Quando tem permissão
@@ -328,16 +349,17 @@ class Vendedor(Cliente):
         return resultado is not None
 
 class Admin(Vendedor):
+    
     @staticmethod
     def registar(bd, username, password):
         try:
-            sql = "INSERT INTO users (username, password, cargo_type) VALUES (%s, %s, 'admin')"
+            sql = "INSERT INTO users (username, password, cargo) VALUES (%s, %s, 'admin')"
             bd.cursor.execute(sql, (username, password))
             bd.conn.commit()
             return Mensagem.UTILIZADOR_CRIADO
         except:
             return Mensagem.UTILIZADOR_JA_EXISTE
-        
+
     def __init__(self, id, bd):
         super().__init__(id, bd)
         self.store_id = None
@@ -346,7 +368,7 @@ class Admin(Vendedor):
     def retirar_id_da_loja_do_utilizador(self):
         # Limpar store_id para garantir que não há associações indesejadas, 
         # Verifica se é "admin" só para garantir que um vendedor não seja afetado
-        self.bd.cursor.execute("UPDATE users SET store_id=NULL WHERE id=%s AND cargo_type='admin'", (self.id,))
+        self.bd.cursor.execute("UPDATE users SET store_id=NULL WHERE id=%s AND cargo='admin'", (self.id,))
         self.bd.conn.commit()
 
     def adicionar_produto(self, nome, categoria, descricao, preco, stock, id_da_loja_do_produto):
@@ -359,23 +381,7 @@ class Admin(Vendedor):
         return Produto.atualizar_produto(self.bd, id_produto, novo_preco, novo_stock, nova_descricao, nova_categoria)
 
     def remover_produto(self, id_produto):
-        try:
-            # Verifica se o produto existe
-            self.bd.cursor.execute("SELECT id FROM products WHERE id=%s", (id_produto,))
-            if not self.bd.cursor.fetchone():
-                return Mensagem.NAO_ENCONTRADO
-            
-            # Remove o produto
-            self.bd.cursor.execute("DELETE FROM products WHERE id=%s", (id_produto,))
-            self.bd.conn.commit()
-            
-            if self.bd.cursor.rowcount > 0:
-                return Mensagem.REMOVIDO
-
-            return Mensagem.NAO_ENCONTRADO
-        except Exception:
-            self.bd.conn.rollback()
-            return Mensagem.ERRO_GENERICO
+        Produto.remover_produto(self.bd,id_produto)
 
     def ver_historico_global(self):
         sql = """
@@ -391,9 +397,9 @@ class Admin(Vendedor):
         self.bd.cursor.execute(sql)
         resultado = self.bd.cursor.fetchall()
 
-        for resultado in resultado:
-            resultado['unit_price'] = float(resultado['unit_price'])
-            resultado['order_date'] = str(resultado['order_date'])
+        for linha in resultado:
+            linha['unit_price'] = float(resultado['unit_price'])
+            linha['order_date'] = str(resultado['order_date'])
 
         return resultado
 

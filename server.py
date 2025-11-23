@@ -5,15 +5,16 @@ import socket
 from database import DatabaseManager
 from entities import User, Admin, Vendedor, Cliente, Produto
 from enums import Mensagem
+
 Ativar_Atalho_Limpar_BD = True  # Ctrl+Alt+P para limpar base de dados
 Chave_De_Criacao_de_Admin = "ESTA_SENHA_É_USADA_NA_CRIAÇÃO_DE_NOVOS_ADMIN_PROVAVELMENTE_SERÁ_REMOVIDA_DEPOIS_ESTA_SENHA_É_MUITO_GRANDE!"
 
 class GestorComandos(socketserver.StreamRequestHandler):
     def _enviar_resposta(self, ok, resultado=None, erro=None):
-        """Envia uma resposta JSON formatada ao cliente"""
         resposta = {'ok': ok}
         
         # Tratar caso especial: tupla (status_enum, dados)
+        # Pedido pedente, {id_pedido, preço total}
         if isinstance(resultado, tuple) and len(resultado) == 2:
             status_enum, dados = resultado
             resposta['resultado'] = [status_enum.name, dados]
@@ -23,8 +24,8 @@ class GestorComandos(socketserver.StreamRequestHandler):
         if erro is not None:
             resposta['erro'] = erro
         
-        msg = json.dumps(resposta, ensure_ascii=False, default=str) + '\n'
-        self.wfile.write(msg.encode()) # Enviar resposta como bytes
+        Mensagem = json.dumps(resposta, ensure_ascii=False, default=str) + '\n'
+        self.wfile.write(Mensagem.encode()) # Enviar resposta como bytes
     
     def _receber_comando(self):
         bytes = self.rfile.readline() # Lê a linha da requesição
@@ -64,8 +65,8 @@ class GestorComandos(socketserver.StreamRequestHandler):
                 if bd.conn:
                     bd.conn.close()
             except:
-                pass
-        
+                pass     
+
 def get_help_commands(user):
     """Retorna comandos disponíveis por categoria baseado no tipo de utilizador"""
     
@@ -122,11 +123,10 @@ def get_help_commands(user):
         return {'categorias': all_commands, 'cargo': 'cliente'}
 
 def Aplicar_Acao(bd, acao, parametros):
+    user = None
     # ações que requerem autenticação
     username = parametros.get('username')
     password = parametros.get('password')
-
-    username = None
 
     if username and password:
         user = User.login(bd, username, password) # tenta autenticar, mas fica none se falhar
@@ -139,7 +139,7 @@ def Aplicar_Acao(bd, acao, parametros):
             return get_help_commands(user)
 
         case 'list_products':
-            id_loja = parametros.get('store_id')
+            id_loja = parametros.get('store_id') # Pode ser None, se user == vendedor
             return listar_produtos(user, id_loja) # listar produtos com possível filtro por loja, e pela loja do vendedor
 
         case 'registar_cliente':
@@ -164,7 +164,7 @@ def Aplicar_Acao(bd, acao, parametros):
             if user is None:
                 return Mensagem.LOGIN_INVALIDO
             
-            return {'usuario': username, 'cargo': user.cargo}
+            return {'utilizador': username, 'cargo': user.cargo}
 
         case 'promover_para_admin':
             if user is None:
@@ -224,7 +224,7 @@ def Aplicar_Acao(bd, acao, parametros):
             
             try:
                 if tipo == 'admin':
-                     return Admin.registar(limpar_base_dados_servidor, username_func, password_func)
+                     return Admin.registar(bd, username_func, password_func)
                 else:
                     return Vendedor.registar(bd, username_func, password_func, loja_id)
             
@@ -322,8 +322,9 @@ def Aplicar_Acao(bd, acao, parametros):
                 return Mensagem.ERRO_PROCESSAMENTO
             
             return user.concluir_pedido(order_id)
-
-    return Mensagem.COMANDO_DESCONHECIDO
+        
+        case _:
+            return Mensagem.COMANDO_DESCONHECIDO
 
 def listar_produtos(user = None, id_loja = None):
     try:
@@ -333,7 +334,7 @@ def listar_produtos(user = None, id_loja = None):
             return []
         
         if id_loja is None and user is not None:
-            if isinstance(user, Vendedor) and user.store_id is not None:
+            if isinstance(user, Vendedor):
                 id_loja = user.store_id
 
         if id_loja is None:
@@ -403,7 +404,6 @@ def limpar_saida_servidor(mensagem):
     print('\n' * 100)
     print(f'{mensagem}')
     
-
 def verificar_porta_em_uso(ip, porta):
     try:
         conexao_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
