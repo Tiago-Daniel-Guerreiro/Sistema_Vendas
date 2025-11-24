@@ -1,5 +1,6 @@
 import mysql.connector
 from mysql.connector import Error
+import time
 
 class DatabaseManager:
     def __init__(self, host='localhost', user='root', password='', database='sistema_vendas', limpar_base_de_dados = False):
@@ -26,7 +27,8 @@ class DatabaseManager:
                 print(f"Conectado com sucesso a: {self.database}")
                 return True
             except Error as e:
-                print(f"Erro ao conectar ao MySQL: {e}. Tentando novamente...")
+                print(f"Erro ao conectar ao MySQL: {e}. Tentando novamente em 5 segundos...")
+                time.sleep(5)
         
     def Verificar_Conectar_bd(self):
         try:

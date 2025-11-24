@@ -7,6 +7,7 @@ from database import DatabaseManager
 from entities import User, Admin, Vendedor, Cliente, Produto
 from enums import Mensagem, Cores
 
+DEBUG = False
 Ativar_Atalho_Limpar_BD = True  # Ctrl+Alt+P para limpar base de dados
 Chave_De_Criacao_de_Admin = "ESTA_SENHA_É_USADA_NA_CRIAÇÃO_DE_NOVOS_ADMIN_PROVAVELMENTE_SERÁ_REMOVIDA_DEPOIS_ESTA_SENHA_É_MUITO_GRANDE!"
 
@@ -40,12 +41,15 @@ class GestorComandos(socketserver.StreamRequestHandler):
         bytes = self.rfile.readline() # Lê a linha da requesição
         if not bytes:
             return None
-        
         try:
             parametos = json.loads(bytes.decode('utf-8')) # json loads convete os bytes para um dicionário
             if not isinstance(parametos, dict):
                 return None
             
+            global DEBUG
+            if DEBUG:
+                print(f"{Cores.CINZA}{parametos}{Cores.NORMAL}")
+
             return parametos
         except Exception as erro:
             self._enviar_resposta(False, erro=f'JSON inválido: {erro}')
@@ -149,25 +153,75 @@ def Aplicar_Acao(bd, acao, parametros):
 
         case 'list_products':
             id_loja = parametros.get('store_id') # Pode ser None, se user == vendedor
+            
+            # Converter store_id para int se fornecido
+            if id_loja is not None:
+                try:
+                    id_loja = int(id_loja)
+                except (ValueError, TypeError):
+                    id_loja = None
+            
             filtros = {}
             if 'categoria' in parametros: 
                 filtros['categoria'] = parametros['categoria']
-            if 'preco_max' in parametros: 
-                filtros['preco_max'] = parametros['preco_max']
+            if 'preco_max' in parametros:
+                try:
+                    filtros['preco_max'] = float(parametros['preco_max'])
+                except (ValueError, TypeError):
+                    pass
             
             return listar_produtos(user, id_loja, filtros)
+        
+        case 'listar_lojas':
+            # Qualquer um pode listar lojas
+            try:
+                bd.cursor.execute("SELECT id, nome, localizacao FROM stores ORDER BY nome")
+                lojas = bd.cursor.fetchall()
+                return lojas
+            except Exception:
+                return []
+        
+        case 'buscar_produto_por_nome':
+            # Busca produto por nome e loja
+            nome_produto = parametros.get('nome_produto')
+            store_id = parametros.get('store_id')
+            
+            if not nome_produto or not store_id:
+                return Mensagem.CREDENCIAIS_INVALIDAS.name
+            
+            try:
+                store_id = int(store_id)
+                sql = """
+                    SELECT p.id, pn.nome, c.nome as categoria, p.preco, p.stock, s.nome as loja
+                    FROM products p
+                    JOIN product_names pn ON p.product_name_id = pn.id
+                    JOIN categories c ON p.category_id = c.id
+                    JOIN stores s ON p.store_id = s.id
+                    WHERE pn.nome = %s AND p.store_id = %s
+                """
+                bd.cursor.execute(sql, (nome_produto, store_id))
+                produto = bd.cursor.fetchone()
+                
+                if produto:
+                    produto['preco'] = float(produto['preco'])
+                    return produto
+                else:
+                    return Mensagem.PRODUTO_NAO_ENCONTRADO.name
+            except Exception:
+                return Mensagem.ERRO_GENERICO.name
 
         case 'registar_cliente':
             username = parametros.get('username')
             password = parametros.get('password')
 
             if user is not None:
-                return Mensagem.REGISTRO_INDISPONIVEL
+                return Mensagem.REGISTRO_INDISPONIVEL.name
             
             if not username or not password:
-                return Mensagem.CREDENCIAIS_INVALIDAS
+                return Mensagem.CREDENCIAIS_INVALIDAS.name
             
-            return Cliente.registar(bd, username, password)
+            resultado = Cliente.registar(bd, username, password)
+            return resultado.name if isinstance(resultado, Mensagem) else resultado
 
         case 'autenticar':
             if user is None:
@@ -177,15 +231,15 @@ def Aplicar_Acao(bd, acao, parametros):
 
         case 'promover_para_admin':
             if user is None:
-                return Mensagem.LOGIN_INVALIDO
+                return Mensagem.LOGIN_INVALIDO.name
 
             chave = parametros.get('chave')
 
             if not chave or chave != Chave_De_Criacao_de_Admin:
-                return Mensagem.PERMISSAO_NEGADA
-            
+                return Mensagem.PERMISSAO_NEGADA.name
+
             return user.promover_a_admin()
-            
+
         case 'editar_senha':
             if user is None:
                 return Mensagem.LOGIN_INVALIDO
@@ -235,7 +289,7 @@ def Aplicar_Acao(bd, acao, parametros):
         case 'add_product':
             # só admin
             if not isinstance(user, Admin):
-                return Mensagem.PERMISSAO_NEGADA
+                return Mensagem.PERMISSAO_NEGADA.name
             
             nome = parametros.get('nome')
             categoria = parametros.get('categoria')
@@ -243,19 +297,43 @@ def Aplicar_Acao(bd, acao, parametros):
             preco = parametros.get('preco')
             stock = parametros.get('stock')
             loja = parametros.get('store_id')
+            
+            # Validar inputs numéricos
+            try:
+                if preco is not None:
+                    preco = float(preco)
+                if stock is not None:
+                    stock = int(stock)
+                if loja is not None:
+                    loja = int(loja)
+            except (ValueError, TypeError):
+                return Mensagem.CREDENCIAIS_INVALIDAS.name
 
-            return user.adicionar_produto(nome, categoria, descricao, preco, stock, loja)
+            resultado = user.adicionar_produto(nome, categoria, descricao, preco, stock, loja)
+            return resultado.name if isinstance(resultado, Mensagem) else resultado
 
         case 'realizar_venda':
             if user is None:
-                return Mensagem.LOGIN_INVALIDO
+                return Mensagem.LOGIN_INVALIDO.name
             
             # cliente ou vendedor podem realizar venda (vendedor limitado via store_id na sua conta em entities)
             itens = parametros.get('itens')
             if not itens or not isinstance(itens, dict):
-                return Mensagem.ERRO_PROCESSAMENTO
+                return Mensagem.ERRO_PROCESSAMENTO.name
             
-            return user.realizar_venda(itens)
+            # Validar que product_id e quantidade são numéricos
+            try:
+                itens_validados = {}
+                for product_id, quantidade in itens.items():
+                    pid = int(product_id)
+                    qtd = int(quantidade)
+                    if qtd <= 0:
+                        return Mensagem.CREDENCIAIS_INVALIDAS.name
+                    itens_validados[str(pid)] = qtd
+            except (ValueError, TypeError):
+                return Mensagem.CREDENCIAIS_INVALIDAS.name
+            
+            return user.realizar_venda(itens_validados)
 
         case 'ver_meu_historico':
             if user is None:
@@ -319,11 +397,130 @@ def Aplicar_Acao(bd, acao, parametros):
         
         case 'verificar_stock_baixo':
             if not isinstance(user, Vendedor):
-                return Mensagem.PERMISSAO_NEGADA
+                return Mensagem.PERMISSAO_NEGADA.name
             return Vendedor.verificar_stock_baixo(bd)
+        
+        # Gestão de Lojas (Admin)
+        case 'criar_loja':
+            if not isinstance(user, Admin):
+                return Mensagem.PERMISSAO_NEGADA.name
+            
+            nome = parametros.get('nome')
+            localizacao = parametros.get('localizacao')
+            
+            resultado = user.criar_loja(nome, localizacao)
+            return resultado.name if isinstance(resultado, Mensagem) else resultado
+        
+        case 'editar_loja':
+            if not isinstance(user, Admin):
+                return Mensagem.PERMISSAO_NEGADA.name
+            
+            store_id = parametros.get('store_id')
+            novo_nome = parametros.get('novo_nome')
+            nova_localizacao = parametros.get('nova_localizacao')
+            
+            if not store_id:
+                return Mensagem.NAO_ENCONTRADO.name
+            
+            try:
+                store_id = int(store_id)
+            except (ValueError, TypeError):
+                return Mensagem.CREDENCIAIS_INVALIDAS.name
+            
+            resultado = user.editar_loja(store_id, novo_nome, nova_localizacao)
+            return resultado.name if isinstance(resultado, Mensagem) else resultado
+        
+        case 'apagar_loja':
+            if not isinstance(user, Admin):
+                return Mensagem.PERMISSAO_NEGADA.name
+            
+            store_id = parametros.get('store_id')
+            if not store_id:
+                return Mensagem.NAO_ENCONTRADO.name
+            
+            try:
+                store_id = int(store_id)
+            except (ValueError, TypeError):
+                return Mensagem.CREDENCIAIS_INVALIDAS.name
+            
+            resultado = user.apagar_loja(store_id)
+            return resultado.name if isinstance(resultado, Mensagem) else resultado
+        
+        case 'listar_utilizadores':
+            if not isinstance(user, Admin):
+                return Mensagem.PERMISSAO_NEGADA.name
+            
+            filtro_cargo = parametros.get('filtro_cargo')
+            filtro_loja = parametros.get('filtro_loja')
+            
+            # Validar filtro_loja se fornecido
+            if filtro_loja:
+                try:
+                    filtro_loja = int(filtro_loja)
+                except (ValueError, TypeError):
+                    filtro_loja = None
+            
+            resultado = user.listar_utilizadores(filtro_cargo, filtro_loja)
+            return resultado
+        
+        case 'editar_username':
+            if user is None:
+                return Mensagem.LOGIN_INVALIDO.name
+            
+            novo_username = parametros.get('novo_username')
+            if not novo_username:
+                return Mensagem.CREDENCIAIS_INVALIDAS.name
+            
+            resultado = user.editar_username(novo_username)
+
+            if isinstance(resultado, Mensagem):
+                return resultado.name
+            return resultado
+
+        case 'listar_categorias':
+            # Listar todas as categorias únicas
+            try:
+                bd_temp = DatabaseManager()
+                if bd_temp.connect() and bd_temp.cursor is not None:
+                    bd_temp.cursor.execute("SELECT DISTINCT nome FROM categories ORDER BY nome")
+                    categorias = [row['nome'] for row in bd_temp.cursor.fetchall()]  # type: ignore
+                    if bd_temp.conn:
+                        bd_temp.conn.close()
+                    return categorias
+                return []
+            except:
+                return []
+        
+        case 'listar_nomes_produtos':
+            # Listar todos os nomes de produtos únicos
+            try:
+                bd_temp = DatabaseManager()
+                if bd_temp.connect() and bd_temp.cursor is not None:
+                    bd_temp.cursor.execute("SELECT DISTINCT nome FROM product_names ORDER BY nome")
+                    nomes = [row['nome'] for row in bd_temp.cursor.fetchall()]  # type: ignore
+                    if bd_temp.conn:
+                        bd_temp.conn.close()
+                    return nomes
+                return []
+            except:
+                return []
+        
+        case 'listar_descricoes':
+            # Listar todas as descrições únicas
+            try:
+                bd_temp = DatabaseManager()
+                if bd_temp.connect() and bd_temp.cursor is not None:
+                    bd_temp.cursor.execute("SELECT DISTINCT descricao FROM descriptions ORDER BY descricao")
+                    descricoes = [row['descricao'] for row in bd_temp.cursor.fetchall()]  # type: ignore
+                    if bd_temp.conn:
+                        bd_temp.conn.close()
+                    return descricoes
+                return []
+            except:
+                return []
 
         case _:
-            return Mensagem.COMANDO_DESCONHECIDO
+            return Mensagem.COMANDO_DESCONHECIDO.name
 
 def listar_produtos(user = None, id_loja = None, filtros_extras = None):
     try:
@@ -377,8 +574,14 @@ def ativar_atalho_servidor():
                     print('Atalho Ctrl+Alt+P detectado!')
                     limpar_base_dados_servidor()
                     os._exit(0) # Finaliza o servidor após limpar a base de dados
-            except:
+            except ImportError: # se passou pela prima verifica só por garantia
+                print("A função de limpar base de dados não está disponivel.")
+                break
+            except: 
                 pass
+
+    except ImportError:
+        print("A função de limpar base de dados não está disponivel.")
     except Exception as e:
         print(f'Erro: {str(e)}')
 
@@ -387,19 +590,21 @@ def limpar_saida_servidor(mensagem):
     print('\n' * 100) # Coloca 100 linhas em branco para simular uma Limpeza de ecrã
     print(f'{mensagem}')
     
-def verificar_porta_em_uso(ip, porta):
+def verificar_port_em_uso(ip, port):
     try:
         conexao_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        resultado = conexao_socket.connect_ex((ip, porta))
+        resultado = conexao_socket.connect_ex((ip, port))
         conexao_socket.close()
-        return resultado == 0  # 0 significa que conseguiu conectar (porta em uso)
+        return resultado == 0  # 0 significa que conseguiu conectar (port em uso)
     except:
         return False
 
-def run_server(host='127.0.0.1', port=5000):
+def run_server(host, port, debug = False):
+    global DEBUG
+    DEBUG = debug
     # Verificar se servidor já está ativo
-    if verificar_porta_em_uso(host, port):
-        print('A porta já está a ser usada, tente novamente mais tarde ou feche a aplicação que a está a usar.')
+    if verificar_port_em_uso(host, port):
+        print('A port já está a ser usada, tente novamente mais tarde ou feche a aplicação que a está a usar.')
         return
 
     if Ativar_Atalho_Limpar_BD:
@@ -421,6 +626,9 @@ def run_server(host='127.0.0.1', port=5000):
     except Exception as e:
         limpar_saida_servidor(f"{Cores.VERMELHO}{Cores.NEGRITO}Erro fatal ao iniciar o servidor: {e}{Cores.NORMAL}")
 
-if __name__ == '__main__':
+def run(host='127.0.0.1', port=5000, debug = False):
+    run_server(host, port,debug)
+
+if __name__ == '__main__': # Quando executado diretamente
     run_server(host='127.0.0.1', port=5000)
 

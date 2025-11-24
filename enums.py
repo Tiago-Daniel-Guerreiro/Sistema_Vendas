@@ -7,6 +7,10 @@ class Cores(Enum):
     VERDE = '\033[92m'
     AMARELO = '\033[93m'
     VERMELHO = '\033[91m'
+    LARANJA = '\033[38;5;208m'
+    MAGENTA = '\033[35m'
+    CASTANHO = '\033[38;5;130m'
+    CINZA = '\033[90m'
     NORMAL = '\033[0m'
     NEGRITO = '\033[1m'
 

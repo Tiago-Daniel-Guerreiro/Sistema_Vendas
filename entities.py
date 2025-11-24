@@ -186,6 +186,41 @@ class User:
                 case 'cliente':
                     return Cliente(resultado['id'], bd)
         return None
+    
+    def editar_username(self, novo_username):
+        """
+        Edita o username do utilizador
+        Verifica unicidade e força logout (retornando mensagem apropriada)
+        """
+        try:
+            if not novo_username or len(novo_username.strip()) == 0:
+                return Mensagem.CREDENCIAIS_INVALIDAS
+            
+            novo_username = novo_username.strip()
+            
+            # Verificar se o novo username já existe
+            self.bd.cursor.execute(
+                "SELECT id FROM users WHERE username = %s AND id != %s",
+                (novo_username, self.id)
+            )
+            if self.bd.cursor.fetchone():
+                return Mensagem.UTILIZADOR_JA_EXISTE
+            
+            # Atualizar username
+            self.bd.cursor.execute(
+                "UPDATE users SET username = %s WHERE id = %s",
+                (novo_username, self.id)
+            )
+            self.bd.conn.commit()
+            
+            # Atualizar localmente
+            self.username = novo_username
+            
+            return Mensagem.ATUALIZADO
+        except Exception as e:
+            self.bd.conn.rollback()
+            print(f"Erro ao editar username: {e}")
+            return Mensagem.ERRO_GENERICO
 
 class Cliente(User):
     @staticmethod
@@ -225,7 +260,12 @@ class Cliente(User):
                 self.bd.cursor.execute("SELECT stock, preco, store_id FROM products WHERE id = %s", (product_id,))
                 product = self.bd.cursor.fetchone()
 
-                if not product or product['stock'] < quantidade:
+                # PRIORIDADE 1: Verificar se o produto existe
+                if not product:
+                    return Mensagem.PRODUTO_NAO_ENCONTRADO
+                
+                # PRIORIDADE 2: Verificar se tem stock suficiente
+                if product['stock'] < quantidade:
                     return Mensagem.STOCK_INSUFICIENTE
 
                 if loja_pedido is None: 
@@ -432,6 +472,80 @@ class Admin(Vendedor):
 
     def remover_produto(self, id_produto):
         Produto.remover_produto(self.bd,id_produto)
+    
+    # Gestão de Lojas
+    def criar_loja(self, nome, localizacao):
+        """Cria uma nova loja"""
+        try:
+            if not nome or not localizacao:
+                return Mensagem.CREDENCIAIS_INVALIDAS
+            
+            self.bd.cursor.execute(
+                "INSERT INTO stores (nome, localizacao) VALUES (%s, %s)",
+                (nome, localizacao)
+            )
+            self.bd.conn.commit()
+            return Mensagem.ADICIONADO
+        except:
+            self.bd.conn.rollback()
+            return Mensagem.ERRO_DUPLICADO
+    
+    def editar_loja(self, store_id, novo_nome=None, nova_localizacao=None):
+        """Edita informações de uma loja"""
+        try:
+            # Verificar se loja existe
+            self.bd.cursor.execute("SELECT id FROM stores WHERE id=%s", (store_id,))
+            if not self.bd.cursor.fetchone():
+                return Mensagem.NAO_ENCONTRADO
+            
+            campos = []
+            valores = []
+            
+            if novo_nome:
+                campos.append("nome=%s")
+                valores.append(novo_nome)
+            if nova_localizacao:
+                campos.append("localizacao=%s")
+                valores.append(nova_localizacao)
+            
+            if not campos:
+                return Mensagem.ATUALIZADO
+            
+            valores.append(store_id)
+            sql = f"UPDATE stores SET {','.join(campos)} WHERE id=%s"
+            self.bd.cursor.execute(sql, tuple(valores))
+            self.bd.conn.commit()
+            
+            return Mensagem.ATUALIZADO
+        except:
+            self.bd.conn.rollback()
+            return Mensagem.ERRO_GENERICO
+    
+    def apagar_loja(self, store_id):
+        """Remove uma loja (apenas se não tiver produtos/vendedores associados)"""
+        try:
+            # Verificar se loja existe
+            self.bd.cursor.execute("SELECT id FROM stores WHERE id=%s", (store_id,))
+            if not self.bd.cursor.fetchone():
+                return Mensagem.NAO_ENCONTRADO
+            
+            # Verificar se tem produtos
+            self.bd.cursor.execute("SELECT COUNT(*) as total FROM products WHERE store_id=%s", (store_id,))
+            if self.bd.cursor.fetchone()['total'] > 0:
+                return Mensagem.ERRO_PROCESSAMENTO  # Tem produtos associados
+            
+            # Verificar se tem vendedores
+            self.bd.cursor.execute("SELECT COUNT(*) as total FROM users WHERE store_id=%s", (store_id,))
+            if self.bd.cursor.fetchone()['total'] > 0:
+                return Mensagem.ERRO_PROCESSAMENTO  # Tem vendedores associados
+            
+            # Pode remover
+            self.bd.cursor.execute("DELETE FROM stores WHERE id=%s", (store_id,))
+            self.bd.conn.commit()
+            return Mensagem.REMOVIDO
+        except:
+            self.bd.conn.rollback()
+            return Mensagem.ERRO_GENERICO
 
     def ver_historico_global(self):
         sql = """
@@ -466,3 +580,37 @@ class Admin(Vendedor):
         except:
             self.bd.conn.rollback()
             return Mensagem.ERRO_PROCESSAMENTO
+    
+    def listar_utilizadores(self, filtro_cargo=None, filtro_loja=None):
+        """
+        Lista utilizadores com filtros opcionais
+        filtro_cargo: 'cliente', 'vendedor', 'admin', ou None para todos
+        filtro_loja: store_id para filtrar vendedores de uma loja específica
+        """
+        try:
+            sql = """
+                SELECT users.id, users.username, users.cargo, 
+                       stores.nome as loja, stores.id as store_id
+                FROM users
+                LEFT JOIN stores ON users.store_id = stores.id
+                WHERE 1=1
+            """
+            parametros = []
+            
+            if filtro_cargo:
+                sql += " AND users.cargo = %s"
+                parametros.append(filtro_cargo)
+            
+            if filtro_loja:
+                sql += " AND users.store_id = %s"
+                parametros.append(filtro_loja)
+            
+            sql += " ORDER BY users.cargo, users.username"
+            
+            self.bd.cursor.execute(sql, tuple(parametros))
+            resultado = self.bd.cursor.fetchall()
+            
+            return resultado
+        except Exception as e:
+            print(f"Erro ao listar utilizadores: {e}")
+            return []
