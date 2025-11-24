@@ -5,7 +5,7 @@ import socket
 import os
 from database import DatabaseManager
 from entities import User, Admin, Vendedor, Cliente, Produto
-from enums import Mensagem
+from enums import Mensagem, Cores
 
 Ativar_Atalho_Limpar_BD = True  # Ctrl+Alt+P para limpar base de dados
 Chave_De_Criacao_de_Admin = "ESTA_SENHA_É_USADA_NA_CRIAÇÃO_DE_NOVOS_ADMIN_PROVAVELMENTE_SERÁ_REMOVIDA_DEPOIS_ESTA_SENHA_É_MUITO_GRANDE!"
@@ -412,9 +412,9 @@ def run_server(host='127.0.0.1', port=5000):
     try:
         server.serve_forever() # Inicia o loop do servidor
     except KeyboardInterrupt:
-        limpar_saida_servidor('Servidor a encerrar.')
+        print(f"\n\n{Cores.ROXO}A aplicação foi interrompida pelo utilizador.{Cores.NORMAL}")
     except Exception as e:
-        print(f'Erro: {str(e)}\nServidor a encerrar.')
+        print(f"{Cores.VERMELHO}{Cores.NEGRITO}Erro fatal: {e}{Cores.NORMAL}")
     finally:
         server.shutdown()
         server.server_close()

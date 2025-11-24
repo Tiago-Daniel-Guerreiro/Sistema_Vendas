@@ -10,6 +10,9 @@ class Cores(Enum):
     NORMAL = '\033[0m'
     NEGRITO = '\033[1m'
 
+    def __str__(self):
+        return self.value
+    
 class Mensagem(Enum):
     SUCESSO = 1
     ERRO_GENERICO = 2

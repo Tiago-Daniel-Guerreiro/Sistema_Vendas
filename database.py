@@ -9,27 +9,24 @@ class DatabaseManager:
         self.cursor = None
         self.limpar_base_de_dados = limpar_base_de_dados
 
+
     def connect(self):
-        try:
-            # Garante que a BD existe antes de tentar ligar a ela
-            if not self.Verificar_Conectar_bd():
-                return False
+        while True:
+            try:
+                # Garante que a BD existe antes de tentar ligar a ela
+                if not self.Verificar_Conectar_bd():
+                    print("Falha ao verificar/criar base de dados. Tentando novamente...")
+                    continue # Continua para o proximo loop
 
-            # Adiciona a base de dados à configuração antes de conectar
-            self.config['database'] = self.database
-            self.conn = mysql.connector.connect(**self.config) # usa kwargs para não precisar especificar cada parâmetro
-
-            # dictionary=True permite aceder aos resultados como dicionários.
-            # Exemplo: row['username'] em vez de row[0]
-            self.cursor = self.conn.cursor(dictionary=True)
-            
-            self.create_tables()
-            print(f"Conectado com sucesso a: {self.database}")
-            return True
-        
-        except Error as e:
-            print(f"Erro Crítico: {e}")
-            return False
+                # Adiciona a base de dados à configuração antes de conectar
+                self.config['database'] = self.database
+                self.conn = mysql.connector.connect(**self.config)
+                self.cursor = self.conn.cursor(dictionary=True)
+                self.create_tables()
+                print(f"Conectado com sucesso a: {self.database}")
+                return True
+            except Error as e:
+                print(f"Erro ao conectar ao MySQL: {e}. Tentando novamente...")
         
     def Verificar_Conectar_bd(self):
         try:
