@@ -42,3 +42,5 @@ class Mensagem(Enum):
     ERRO_PROCESSAMENTO = 27
     ALERTA_STOCK_BAIXO = 28
     
+    def __str__(self):
+        return self.name

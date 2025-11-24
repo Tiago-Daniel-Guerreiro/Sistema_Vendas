@@ -5,8 +5,10 @@ import getpass
 import time
 from enums import Cores
 
+Debug = True
+
 class ClienteRede:
-    def __init__(self, host='127.0.0.1', porta=5000):
+    def __init__(self, host, porta):
         self.host = host
         self.porta = porta
 
@@ -25,6 +27,7 @@ class ClienteRede:
                     parte = conexao.recv(4096) # Recebe 4096 bytes por vez
                     if not parte:
                         break
+                    
                     resposta_bytes += parte
                     if b'\n' in parte:
                         break
@@ -33,6 +36,9 @@ class ClienteRede:
                 if not resposta_str:
                     return {'ok': False, 'erro': 'Resposta vazia do servidor'}
                 
+                if Debug == True: # Quando Debug está ativo, imprime a resposta para saber o que o servidor responde
+                    print(resposta_str) # Debug
+
                 return json.loads(resposta_str)
         except ConnectionRefusedError:
             return {'ok': False, 'erro': 'Não foi possível conectar ao servidor.'}
@@ -40,8 +46,8 @@ class ClienteRede:
             return {'ok': False, 'erro': f'Erro de comunicação: {str(e)}'}
 
 class ClienteVendas:
-    def __init__(self):
-        self.rede = ClienteRede()
+    def __init__(self, host='127.0.0.1', porta=5000):
+        self.rede = ClienteRede(host, porta)
         self.utilizador = None
         self.cargo = None
         self.comandos_disponiveis = {}
@@ -50,19 +56,19 @@ class ClienteVendas:
         os.system('cls')
 
     def mostrar_cabecalho(self, texto):
-        print(f"\n{Cores.ROXO}{Cores.NEGRITO} {texto} {Cores.NORMAL}")
+        print(f"\n{Cores.ROXO}{Cores.NEGRITO}{texto} {Cores.NORMAL}")
 
     def mostrar_sucesso(self, texto):
-        print(f"{Cores.VERDE}Sucesso - {texto}{Cores.NORMAL}")
+        print(f"{Cores.VERDE}Sucesso: {texto}{Cores.NORMAL}")
 
     def mostrar_erro(self, texto):
-        print(f"{Cores.VERMELHO}Erro - {texto}{Cores.NORMAL}")
+        print(f"{Cores.VERMELHO}Erro: {texto}{Cores.NORMAL}")
 
     def mostrar_info(self, texto):
-        print(f"{Cores.CIANO}Info - {texto}{Cores.NORMAL}")
+        print(f"{Cores.CIANO}{texto}{Cores.NORMAL}")
 
     def mostrar_aviso(self, texto):
-        print(f"{Cores.AMARELO}Aviso - {texto}{Cores.NORMAL}")
+        print(f"{Cores.AMARELO}Aviso: {texto}{Cores.NORMAL}")
 
     def ler_texto(self, prompt):
         return input(f"{Cores.AZUL}{prompt}{Cores.NORMAL} ").strip()
@@ -81,8 +87,9 @@ class ClienteVendas:
             self.mostrar_cabecalho(titulo)
             
             for indice, (descricao, _) in enumerate(opcoes, 1):
-                print(f"{indice}. {descricao}")
-            print("0. Voltar/Sair")
+                print(f"{indice}) {descricao}")
+                
+            print("\n0) Voltar/Sair")
             
             texto_opcao = self.ler_texto("Opção:")
 
@@ -216,13 +223,28 @@ class ClienteVendas:
     def _fazer_login(self):
         self.mostrar_cabecalho("Login")
         utilizador = self.ler_texto("Username:")
+        if not utilizador:
+            self.mostrar_erro("Username não pode estar vazio.")
+            self.pausar()
+            return
+            
         senha = self.ler_segredo("Password:")
+        if not senha:
+            self.mostrar_erro("Password não pode estar vazia.")
+            self.pausar()
+            return
         
         resposta = self.rede.enviar('autenticar', {'username': utilizador, 'password': senha})
         if resposta.get('ok'):
-            self.utilizador = {'username': utilizador, 'password': senha}
-            self.cargo = resposta['resultado'].get('cargo')
-            self.mostrar_sucesso(f"Bem-vindo, {utilizador} ({self.cargo})")
+            resultado = resposta.get('resultado')
+            # Verifica se resultado é um dicionário
+            if isinstance(resultado, dict):
+                self.utilizador = {'username': utilizador, 'password': senha}
+                self.cargo = resultado.get('cargo', 'desconhecido')
+                self.mostrar_sucesso(f"Bem-vindo, {utilizador} ({self.cargo})")
+            else:
+                self.mostrar_erro(f"{resultado}")
+                self.pausar()
         else:
             self.mostrar_erro(resposta.get('erro', 'Erro no login'))
             self.pausar()
@@ -230,7 +252,17 @@ class ClienteVendas:
     def _registar_cliente(self):
         self.mostrar_cabecalho("Registo")
         utilizador = self.ler_texto("Username:")
+        if not utilizador:
+            self.mostrar_erro("Username não pode estar vazio.")
+            self.pausar()
+            return
+            
         senha = self.ler_segredo("Password:")
+        if not senha:
+            self.mostrar_erro("Password não pode estar vazia.")
+            self.pausar()
+            return
+            
         confirmacao = self.ler_segredo("Confirmar Password:")
         
         if senha != confirmacao:
@@ -240,6 +272,7 @@ class ClienteVendas:
 
         resposta = self.rede.enviar('registar_cliente', {'username': utilizador, 'password': senha})
         if resposta.get('ok'):
+            resultado = resposta.get('resultado', '')
             self.mostrar_sucesso("Conta criada com sucesso! Faça login para continuar.")
         else:
             self.mostrar_erro(resposta.get('erro', 'Erro ao criar conta'))
@@ -490,6 +523,6 @@ if __name__ == '__main__':
         app = ClienteVendas()
         app.iniciar()
     except KeyboardInterrupt:
-        print("\n\n{Cores.ROXO}A aplicação foi interrompida pelo utilizador.{Cores.NORMAL}")
+        print(f"\n\n{Cores.ROXO}A aplicação foi interrompida pelo utilizador.{Cores.NORMAL}")
     except Exception as e:
         print(f"{Cores.VERMELHO}{Cores.NEGRITO}Erro fatal: {e}{Cores.NORMAL}")

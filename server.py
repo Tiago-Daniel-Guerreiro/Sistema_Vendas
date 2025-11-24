@@ -18,15 +18,23 @@ class GestorComandos(socketserver.StreamRequestHandler):
         # Pedido pedente, {id_pedido, preço total}
         if isinstance(resultado, tuple) and len(resultado) == 2:
             status_enum, dados = resultado
-            resposta['resultado'] = [status_enum.name, dados]
+            # Se o primeiro elemento for um Enum, converte para string
+            if hasattr(status_enum, 'name'):
+                resposta['resultado'] = [status_enum, dados]
+            else:
+                resposta['resultado'] = [status_enum, dados]
         elif resultado is not None:
             resposta['resultado'] = resultado
         
         if erro is not None:
             resposta['erro'] = erro
         
-        Mensagem = json.dumps(resposta, ensure_ascii=False, default=str) + '\n'
-        self.wfile.write(Mensagem.encode()) # Enviar resposta como bytes
+        try:
+            Mensagem_json = json.dumps(resposta, ensure_ascii=False, default=str) + '\n'
+            self.wfile.write(Mensagem_json.encode('utf-8'))
+            self.wfile.flush()  # Garante que os dados são enviados imediatamente
+        except Exception as e:
+            print(f"Erro ao enviar resposta: {e}")
     
     def _receber_comando(self):
         bytes = self.rfile.readline() # Lê a linha da requesição
@@ -142,8 +150,10 @@ def Aplicar_Acao(bd, acao, parametros):
         case 'list_products':
             id_loja = parametros.get('store_id') # Pode ser None, se user == vendedor
             filtros = {}
-            if 'categoria' in parametros: filtros['categoria'] = parametros['categoria']
-            if 'preco_max' in parametros: filtros['preco_max'] = parametros['preco_max']
+            if 'categoria' in parametros: 
+                filtros['categoria'] = parametros['categoria']
+            if 'preco_max' in parametros: 
+                filtros['preco_max'] = parametros['preco_max']
             
             return listar_produtos(user, id_loja, filtros)
 
@@ -273,7 +283,7 @@ def Aplicar_Acao(bd, acao, parametros):
             else:
                 return Mensagem.ERRO_PERMISSAO
             
-            return result
+            return result if isinstance(result, Mensagem) else result
 
         case 'deletar_produto':
             # Só admin pode deletar
@@ -284,7 +294,8 @@ def Aplicar_Acao(bd, acao, parametros):
             if not product_id:
                 return Mensagem.NAO_ENCONTRADO
             
-            return user.remover_produto(product_id)
+            resultado = user.remover_produto(product_id)
+            return resultado if isinstance(resultado, Mensagem) else resultado
 
         case 'concluir_pedido':
             # Vendedor ou Admin conclui um pedido
@@ -295,7 +306,8 @@ def Aplicar_Acao(bd, acao, parametros):
             if not order_id:
                 return Mensagem.ERRO_PROCESSAMENTO
             
-            return user.concluir_pedido(order_id)
+            resultado = user.concluir_pedido(order_id)
+            return resultado if isinstance(resultado, Mensagem) else resultado
 
         case 'listar_pedidos':
             # Vendedor lista seus pedidos, com filtro opcional
@@ -333,27 +345,14 @@ def listar_produtos(user = None, id_loja = None, filtros_extras = None):
         return []
     
 def limpar_base_dados_servidor():
-    """Limpa a base de dados (chamado pelo hotkey)"""
     try:
-        bd = DatabaseManager()
-        if not bd.connect():
-            print('Erro ao conectar BD')
+        # Só funciona quando o sistema está rodar em localhost por segurança (usado para testes)
+        bd = DatabaseManager(limpar_base_de_dados=True) 
+        # Cria uma nova conexão para limpar a base de dados
+        if not bd.connect() and bd.conn is None:
+            print('Erro ao conectar BD para limpar')
             return
-        
-        if bd.cursor and bd.conn:
-            # Obtém todos os nomes de tabelas
-            bd.cursor.execute("""
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = 'public'
-            """)
-            tabelas = bd.cursor.fetchall()
 
-            for tabela in tabelas:
-                bd.cursor.execute(f'DROP TABLE IF EXISTS "{tabela}" CASCADE')
-            bd.conn.commit()
-            bd.conn.close()
-        
         print('Base de dados limpa com sucesso!')
     except Exception as e:
         print(f'Erro ao limpar BD: {str(e)}')
@@ -384,8 +383,8 @@ def ativar_atalho_servidor():
         print(f'Erro: {str(e)}')
 
 def limpar_saida_servidor(mensagem):
-    """Imprime 100 quebras de linha seguidas de uma mensagem"""
-    print('\n' * 100)
+    os.system('cls')
+    print('\n' * 100) # Coloca 100 linhas em branco para simular uma Limpeza de ecrã
     print(f'{mensagem}')
     
 def verificar_porta_em_uso(ip, porta):
@@ -402,22 +401,26 @@ def run_server(host='127.0.0.1', port=5000):
     if verificar_porta_em_uso(host, port):
         print('A porta já está a ser usada, tente novamente mais tarde ou feche a aplicação que a está a usar.')
         return
-    
-    if Ativar_Atalho_Limpar_BD: # Serve para testes, para conseguir limpar a base de dados rapidamente
+
+    if Ativar_Atalho_Limpar_BD:
         hotkey_thread = threading.Thread(target=ativar_atalho_servidor, daemon=True)
         hotkey_thread.start()
-    
-    server = socketserver.ThreadingTCPServer((host, port), GestorComandos) # chama automaticamente o "handle"
-    print(f'À espera de pedidos em {host}:{port}')
+
     try:
-        server.serve_forever() # Inicia o loop do servidor
-    except KeyboardInterrupt:
-        print(f"\n\n{Cores.ROXO}A aplicação foi interrompida pelo utilizador.{Cores.NORMAL}")
+        server = socketserver.ThreadingTCPServer((host, port), GestorComandos)
+        print(f'À espera de pedidos em {host}:{port}')
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            limpar_saida_servidor(f"\n\n{Cores.ROXO}A aplicação foi interrompida pelo utilizador.{Cores.NORMAL}")
+        except Exception as e:
+            limpar_saida_servidor(f"{Cores.VERMELHO}{Cores.NEGRITO}Erro fatal: {e}{Cores.NORMAL}")
+        finally:
+            server.shutdown()
+            server.server_close()
     except Exception as e:
-        print(f"{Cores.VERMELHO}{Cores.NEGRITO}Erro fatal: {e}{Cores.NORMAL}")
-    finally:
-        server.shutdown()
-        server.server_close()
+        limpar_saida_servidor(f"{Cores.VERMELHO}{Cores.NEGRITO}Erro fatal ao iniciar o servidor: {e}{Cores.NORMAL}")
 
 if __name__ == '__main__':
-    run_server()
+    run_server(host='127.0.0.1', port=5000)
+

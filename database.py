@@ -7,7 +7,7 @@ class DatabaseManager:
         self.database = database 
         self.conn = None
         self.cursor = None
-        self.limpar_base_de_dados = limpar_base_de_dados
+        self.__limpar_base_de_dados = limpar_base_de_dados
 
 
     def connect(self):
@@ -34,7 +34,7 @@ class DatabaseManager:
             temp_conn = mysql.connector.connect(**self.config)
             cursor = temp_conn.cursor()
 
-            if self.limpar_base_de_dados== True:
+            if self.__limpar_base_de_dados== True:
                 cursor.execute(f"DROP DATABASE {self.database}")
 
             cursor.execute(f"CREATE DATABASE IF NOT EXISTS {self.database}")
