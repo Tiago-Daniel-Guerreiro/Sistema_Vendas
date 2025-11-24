@@ -3,8 +3,9 @@ import socket
 import os
 import getpass
 import time
+from ENUM import enum
 
-class Cores:
+class Cores(enum):
     ROXO = '\033[95m'
     AZUL = '\033[94m'
     CIANO = '\033[96m'
@@ -499,6 +500,6 @@ if __name__ == '__main__':
         app = ClienteVendas()
         app.iniciar()
     except KeyboardInterrupt:
-        print("\n\nA aplicação foi interrompida pelo utilizador.")
+        print("\n\n{Cores.ROXO}A aplicação foi interrompida pelo utilizador.{Cores.NORMAL}")
     except Exception as e:
-        print(f"Erro fatal: {e}")
+        print(f"{Cores.VERMELHO}{Cores.NEGRITO}Erro fatal: {e}{Cores.NORMAL}")
