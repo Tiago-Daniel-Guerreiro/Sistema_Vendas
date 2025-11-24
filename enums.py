@@ -1,5 +1,15 @@
 from enum import Enum
 
+class Cores(Enum):
+    ROXO = '\033[95m'
+    AZUL = '\033[94m'
+    CIANO = '\033[96m'
+    VERDE = '\033[92m'
+    AMARELO = '\033[93m'
+    VERMELHO = '\033[91m'
+    NORMAL = '\033[0m'
+    NEGRITO = '\033[1m'
+
 class Mensagem(Enum):
     SUCESSO = 1
     ERRO_GENERICO = 2

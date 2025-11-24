@@ -3,17 +3,7 @@ import socket
 import os
 import getpass
 import time
-from ENUM import enum
-
-class Cores(enum):
-    ROXO = '\033[95m'
-    AZUL = '\033[94m'
-    CIANO = '\033[96m'
-    VERDE = '\033[92m'
-    AMARELO = '\033[93m'
-    VERMELHO = '\033[91m'
-    NORMAL = '\033[0m'
-    NEGRITO = '\033[1m'
+from enums import Cores
 
 class ClienteRede:
     def __init__(self, host='127.0.0.1', porta=5000):
@@ -59,19 +49,19 @@ class ClienteVendas:
     def limpar_tela(self):
         os.system('cls')
 
-    def imprimir_cabecalho(self, texto):
+    def mostrar_cabecalho(self, texto):
         print(f"\n{Cores.ROXO}{Cores.NEGRITO} {texto} {Cores.NORMAL}")
 
-    def imprimir_sucesso(self, texto):
+    def mostrar_sucesso(self, texto):
         print(f"{Cores.VERDE}Sucesso - {texto}{Cores.NORMAL}")
 
-    def imprimir_erro(self, texto):
+    def mostrar_erro(self, texto):
         print(f"{Cores.VERMELHO}Erro - {texto}{Cores.NORMAL}")
 
-    def imprimir_info(self, texto):
+    def mostrar_info(self, texto):
         print(f"{Cores.CIANO}Info - {texto}{Cores.NORMAL}")
 
-    def imprimir_aviso(self, texto):
+    def mostrar_aviso(self, texto):
         print(f"{Cores.AMARELO}Aviso - {texto}{Cores.NORMAL}")
 
     def ler_texto(self, prompt):
@@ -88,7 +78,7 @@ class ClienteVendas:
             if condicao_de_saida_lambda is not None and condicao_de_saida_lambda() == True:
                 return # Se houver uma condição especial e ela for comprida retorna
 
-            self.imprimir_cabecalho(titulo)
+            self.mostrar_cabecalho(titulo)
             
             for indice, (descricao, _) in enumerate(opcoes, 1):
                 print(f"{indice}. {descricao}")
@@ -104,20 +94,20 @@ class ClienteVendas:
                     # Executa a ação associada à opção
                     opcoes[indice_selecionado][1]()
                 else:
-                    self.imprimir_erro("Opção inválida")
+                    self.mostrar_erro("Opção inválida")
             except ValueError:
-                self.imprimir_erro("Opção inválida")
+                self.mostrar_erro("Opção inválida")
                 self.pausar()
 
     def iniciar(self):
         while True:
             self.limpar_tela()
-            self.imprimir_cabecalho("Sistema de Vendas")
+            self.mostrar_cabecalho("Sistema de Vendas")
 
             ping = self.rede.enviar('ping')
             if not ping.get('ok'):
-                self.imprimir_erro("Servidor indisponível.")
-                self.imprimir_info("Tentando reconectar em 5 segundos...")
+                self.mostrar_erro("Servidor indisponível.")
+                self.mostrar_info("Tentando reconectar em 5 segundos...")
                 time.sleep(5)
                 continue # vai passar para o próximo loop, onde tenta reconectar novamente
 
@@ -149,7 +139,7 @@ class ClienteVendas:
         
         # Se saiu do menu e não logou, encerra o app (quando o utilizador escolhe 0 sem iniciar sessão)
         if not self.utilizador:
-            self.imprimir_info("A sair...")
+            self.mostrar_info("A sair...")
             exit(0)
 
     def _menu_principal(self):
@@ -169,12 +159,12 @@ class ClienteVendas:
             
         opcoes.append(('Minha Conta (Senha, Promoção, Logout)', self._menu_conta))
         
-        # Sai do menu se o usuário deslogar
+        # Sai do menu se o utilizador deslogar
         self.executar_menu(f"Menu Principal - {self.utilizador['username']} [{self.cargo}]", opcoes, condicao_de_saida_lambda=lambda: self.utilizador is None)
         
         # Se saiu do menu e ainda está logado, significa que escolheu 0 (Sair do App)
         if self.utilizador:
-            self.imprimir_info("A sair...")
+            self.mostrar_info("A sair...")
             exit(0)
 
     def _menu_compras(self):
@@ -224,7 +214,7 @@ class ClienteVendas:
 
 
     def _fazer_login(self):
-        self.imprimir_cabecalho("Login")
+        self.mostrar_cabecalho("Login")
         utilizador = self.ler_texto("Username:")
         senha = self.ler_segredo("Password:")
         
@@ -232,37 +222,37 @@ class ClienteVendas:
         if resposta.get('ok'):
             self.utilizador = {'username': utilizador, 'password': senha}
             self.cargo = resposta['resultado'].get('cargo')
-            self.imprimir_sucesso(f"Bem-vindo, {utilizador} ({self.cargo})")
+            self.mostrar_sucesso(f"Bem-vindo, {utilizador} ({self.cargo})")
         else:
-            self.imprimir_erro(resposta.get('erro', 'Erro no login'))
+            self.mostrar_erro(resposta.get('erro', 'Erro no login'))
             self.pausar()
 
     def _registar_cliente(self):
-        self.imprimir_cabecalho("Registo")
+        self.mostrar_cabecalho("Registo")
         utilizador = self.ler_texto("Username:")
         senha = self.ler_segredo("Password:")
         confirmacao = self.ler_segredo("Confirmar Password:")
         
         if senha != confirmacao:
-            self.imprimir_erro("As passwords não coincidem.")
+            self.mostrar_erro("As passwords não coincidem.")
             self.pausar()
             return
 
         resposta = self.rede.enviar('registar_cliente', {'username': utilizador, 'password': senha})
         if resposta.get('ok'):
-            self.imprimir_sucesso("Conta criada com sucesso! Faça login para continuar.")
+            self.mostrar_sucesso("Conta criada com sucesso! Faça login para continuar.")
         else:
-            self.imprimir_erro(resposta.get('erro', 'Erro ao criar conta'))
+            self.mostrar_erro(resposta.get('erro', 'Erro ao criar conta'))
         self.pausar()
 
     def _fazer_logout(self):
         self.utilizador = None
         self.cargo = None
-        self.imprimir_sucesso("Logout efetuado.")
+        self.mostrar_sucesso("Logout efetuado.")
 
     def _listar_produtos(self):
         if not self.utilizador: return
-        self.imprimir_cabecalho("Filtros (Enter para ignorar)")
+        self.mostrar_cabecalho("Filtros (Enter para ignorar)")
         categoria = self.ler_texto("Categoria:")
         preco_maximo = self.ler_texto("Preço Máximo:")
         
@@ -276,14 +266,14 @@ class ClienteVendas:
         if resposta.get('ok'):
             produtos = resposta.get('resultado', [])
             if not produtos:
-                self.imprimir_aviso("Nenhum produto encontrado.")
+                self.mostrar_aviso("Nenhum produto encontrado.")
             else:
                 print(f"\n{Cores.NEGRITO}{'ID':<5} {'Nome':<20} {'Categoria':<15} {'Preço':<10} {'Stock':<8} {'Loja':<15}{Cores.NORMAL}")
                 print("\n")
                 for produto in produtos:
                     print(f"{produto['id']:<5} {produto['nome']:<20} {produto['categoria']:<15} {produto['preco']:<10.2f} {produto['stock']:<8} {produto['loja']:<15}/n")
         else:
-            self.imprimir_erro(resposta.get('erro'))
+            self.mostrar_erro(resposta.get('erro'))
         self.pausar()
 
     def _realizar_compra(self):
@@ -301,14 +291,14 @@ class ClienteVendas:
                 resultado = resposta.get('resultado')
                 if isinstance(resultado, list):
                     status, dados = resultado
-                    self.imprimir_sucesso(f"Pedido realizado! Status: {status}")
-                    self.imprimir_info(f"Pedido: {dados.get('order_id')} | Total: {dados.get('total_price')}€")
+                    self.mostrar_sucesso(f"Pedido realizado! Status: {status}")
+                    self.mostrar_info(f"Pedido: {dados.get('order_id')} | Total: {dados.get('total_price')}€")
                 else:
-             self.imprimir_sucesso(f"Pedido realizado: {resultado}")
+                    self.mostrar_sucesso(f"Pedido realizado: {resultado}")
             else:
-                self.imprimir_erro(resposta.get('erro'))
+                self.mostrar_erro(resposta.get('erro'))
         except ValueError:
-            self.imprimir_erro("Quantidade inválida.")
+            self.mostrar_erro("Quantidade inválida.")
         self.pausar()
 
     def _ver_historico(self):
@@ -316,18 +306,18 @@ class ClienteVendas:
         if resposta.get('ok'):
             historico = resposta.get('resultado', [])
             if not historico:
-                self.imprimir_info("Histórico vazio.")
+                self.mostrar_info("Histórico vazio.")
             else:
                 for pedido in historico:
                     print(f"Data: {pedido['order_date']} | Produto: {pedido['produto']} | Qtd: {pedido['quantity']} | Total: {pedido['quantity']*pedido['unit_price']:.2f}€ | Status: {pedido['status']}")
         else:
-            self.imprimir_erro(resposta.get('erro'))
+            self.mostrar_erro(resposta.get('erro'))
         self.pausar()
 
     def _listar_pedidos_loja(self):
         if not self.utilizador: 
             return
-        self.imprimir_cabecalho("Pedidos da Loja")
+        self.mostrar_cabecalho("Pedidos da Loja")
         filtro = self.ler_texto("Filtrar Status (pendente/concluida/vazio):")
         parametros = {**self.utilizador}
         if filtro: parametros['filtro_status'] = filtro
@@ -338,7 +328,7 @@ class ClienteVendas:
             for produto in pedidos:
                 print(f"ID: {produto['id']} | Data: {produto['order_date']} | Cliente: {produto['cliente']} | Total: {produto['total_price']:.2f}€ | Status: {produto['status']}")
         else:
-            self.imprimir_erro(resposta.get('erro'))
+            self.mostrar_erro(resposta.get('erro'))
         self.pausar()
 
     def _concluir_pedido(self):
@@ -347,9 +337,9 @@ class ClienteVendas:
         pedido_id = self.ler_texto("ID do Pedido a concluir:")
         resposta = self.rede.enviar('concluir_pedido', {**self.utilizador, 'order_id': pedido_id})
         if resposta.get('ok'):
-            self.imprimir_sucesso("Pedido concluído com sucesso!")
+            self.mostrar_sucesso("Pedido concluído com sucesso!")
         else:
-            self.imprimir_erro(resposta.get('erro'))
+            self.mostrar_erro(resposta.get('erro'))
         self.pausar()
 
     def _verificar_stock(self):
@@ -360,20 +350,20 @@ class ClienteVendas:
             resultado = resposta.get('resultado')
             if isinstance(resultado, list) and len(resultado) == 2:
                 mensagem, produtos = resultado
-                self.imprimir_aviso(f"{mensagem}")
+                self.mostrar_aviso(f"{mensagem}")
                 for produto in produtos:
                     print(f" - Produto: {produto['nome']} (ID: {produto['id']}) | Stock: {produto['stock']} | Loja: {produto['loja']}")
             elif resultado == "SUCESSO":
-                self.imprimir_sucesso("Stock está normal (nenhum produto abaixo de 5 unidades).")
+                self.mostrar_sucesso("Stock está normal (nenhum produto abaixo de 5 unidades).")
             else:
-                self.imprimir_info(f"Resultado: {resultado}")
+                self.mostrar_info(f"Resultado: {resultado}")
         else:
-            self.imprimir_erro(resposta.get('erro'))
+            self.mostrar_erro(resposta.get('erro'))
         self.pausar()
 
     def _adicionar_produto(self):
         if not self.utilizador: return
-        self.imprimir_cabecalho("Novo Pedido")
+        self.mostrar_cabecalho("Novo Pedido")
         nome = self.ler_texto("Nome:")
         categoria = self.ler_texto("Categoria:")
         descricao = self.ler_texto("Descrição:")
@@ -389,18 +379,18 @@ class ClienteVendas:
             }
             resposta = self.rede.enviar('add_product', parametros)
             if resposta.get('ok'):
-                self.imprimir_sucesso("Produto adicionado!")
+                self.mostrar_sucesso("Produto adicionado!")
             else:
-                self.imprimir_erro(resposta.get('erro'))
+                self.mostrar_erro(resposta.get('erro'))
         except ValueError:
-            self.imprimir_erro("Valores numéricos inválidos.")
+            self.mostrar_erro("Valores numéricos inválidos.")
         self.pausar()
 
     def _editar_produto(self):
         if not self.utilizador: 
             return
         produto_id = self.ler_texto("ID Produto:")
-        self.imprimir_info("Deixe em branco para não alterar")
+        self.mostrar_info("Deixe em branco para não alterar")
         
         novo_nome = self.ler_texto("Novo Nome:")
         nova_categoria = self.ler_texto("Nova Categoria:")
@@ -421,9 +411,9 @@ class ClienteVendas:
         
         resposta = self.rede.enviar('editar_produto', parametros)
         if resposta.get('ok'):
-            self.imprimir_sucesso("Produto atualizado!")
+            self.mostrar_sucesso("Produto atualizado!")
         else:
-            self.imprimir_erro(resposta.get('erro'))
+            self.mostrar_erro(resposta.get('erro'))
         self.pausar()
 
     def _remover_produto(self):
@@ -436,15 +426,15 @@ class ClienteVendas:
         
         resposta = self.rede.enviar('deletar_produto', {**self.utilizador, 'product_id': produto_id})
         if resposta.get('ok'):
-            self.imprimir_sucesso("Produto removido!")
+            self.mostrar_sucesso("Produto removido!")
         else:
-            self.imprimir_erro(resposta.get('erro'))
+            self.mostrar_erro(resposta.get('erro'))
         self.pausar()
 
     def _criar_funcionario(self):
         if not self.utilizador: 
             return
-        self.imprimir_cabecalho("Criar Funcionario")
+        self.mostrar_cabecalho("Criar Funcionario")
         utilizador = self.ler_texto("Username:")
         senha = self.ler_segredo("Password:")
         tipo = self.ler_texto("Tipo (admin/vendedor):")
@@ -460,9 +450,9 @@ class ClienteVendas:
         
         resposta = self.rede.enviar('criar_funcionario', parametros)
         if resposta.get('ok'):
-            self.imprimir_sucesso("Funcionário criado!")
+            self.mostrar_sucesso("Funcionário criado!")
         else:
-            self.imprimir_erro(resposta.get('erro'))
+            self.mostrar_erro(resposta.get('erro'))
         self.pausar()
 
     def _alterar_senha(self):
@@ -471,16 +461,16 @@ class ClienteVendas:
         nova_senha = self.ler_segredo("Nova Senha:")
         confirmacao = self.ler_segredo("Confirmar:")
         if nova_senha != confirmacao:
-            self.imprimir_erro("Não coincidem.")
+            self.mostrar_erro("Não coincidem.")
             self.pausar()
             return
             
         resposta = self.rede.enviar('editar_senha', {**self.utilizador, 'nova_senha': nova_senha})
         if resposta.get('ok'):
-            self.imprimir_sucesso("Senha alterada!")
+            self.mostrar_sucesso("Senha alterada!")
             self.utilizador['password'] = nova_senha
         else:
-            self.imprimir_erro(resposta.get('erro'))
+            self.mostrar_erro(resposta.get('erro'))
         self.pausar()
 
     def _promover_admin(self):
@@ -489,10 +479,10 @@ class ClienteVendas:
         chave = self.ler_segredo("Chave de Admin:")
         resposta = self.rede.enviar('promover_para_admin', {**self.utilizador, 'chave': chave})
         if resposta.get('ok'):
-            self.imprimir_sucesso("Promovido a Admin! Faça login novamente para atualizar permissões.")
+            self.mostrar_sucesso("Promovido a Admin! Faça login novamente para atualizar permissões.")
             self.utilizador = None # Forçar logout
         else:
-            self.imprimir_erro(resposta.get('erro'))
+            self.mostrar_erro(resposta.get('erro'))
         self.pausar()
 
 if __name__ == '__main__':
