@@ -4,6 +4,7 @@ import os
 import getpass
 import time
 from enums import Cores
+import subprocess
 
 DEBUG = False
 
@@ -11,6 +12,14 @@ class ClienteRede:
     def __init__(self, host, port):
         self.host = host
         self.port = port
+
+    def testar_ping(self):
+        comando = ['ping', '-n', '1', self.host]
+        try:
+            resultado = subprocess.run(comando, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=2)
+            return resultado.returncode == 0
+        except Exception:
+            return False
 
     def enviar(self, acao, parametros=None):
         if parametros is None:
@@ -72,13 +81,17 @@ class ClienteVendas:
         print(f"{Cores.AMARELO}Aviso: {texto}{Cores.NORMAL}")
 
     def ler_texto(self, prompt):
-        return input(f"{Cores.AZUL}{prompt}{Cores.NORMAL} ").strip()
+        return input(f"{Cores.AZUL}{prompt}{Cores.NORMAL}").strip()
 
     def ler_segredo(self, prompt):
-        return getpass.getpass(f"{Cores.AZUL}{prompt}{Cores.NORMAL} ").strip()
+        return getpass.getpass(f"{Cores.AZUL}{prompt}{Cores.NORMAL}").strip()
 
-    def pausar(self):
-        input(f"\n{Cores.NEGRITO}Pressione ENTER para continuar...{Cores.NORMAL}")
+    def pausar(self): 
+        try: # Para Garantir que não aparece um erro ao terminar o programa
+            input(f"\n{Cores.NEGRITO}Pressione ENTER para continuar...{Cores.NORMAL}")
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n\n{Cores.ROXO}Programa encerrado pelo utilizador.{Cores.NORMAL}")
+            exit(0)
 
     def executar_menu(self, titulo, opcoes, condicao_de_saida_lambda = None):
         while True:
@@ -96,11 +109,11 @@ class ClienteVendas:
 
             if texto_opcao == '0':
                 return
+            
             try:
                 indice_selecionado = int(texto_opcao) - 1
                 if 0 <= indice_selecionado < len(opcoes):
-                    # Executa a ação associada à opção
-                    opcoes[indice_selecionado][1]()
+                    opcoes[indice_selecionado][1]() # Executa a ação associada à opção
                 else:
                     self.mostrar_erro("Opção inválida")
             except ValueError:
@@ -110,23 +123,60 @@ class ClienteVendas:
             self.limpar_tela()
 
     def iniciar(self):
+        self.limpar_tela()
         while True:
-            self.limpar_tela()
             self.mostrar_cabecalho("Sistema de Vendas")
-
-            ping = self.rede.enviar('ping')
-            if not ping.get('ok'):
-                self.mostrar_erro("Servidor indisponível.")
-                self.mostrar_info("Tentando reconectar em 5 segundos...")
-                time.sleep(5)
-                continue # vai passar para o próximo loop, onde tenta reconectar novamente
+            if not self._verificar_conexao():
+                continue
 
             self._atualizar_comandos()
-            
             if not self.utilizador:
                 self._menu_inicial()
             else:
                 self._menu_principal()
+
+    def _verificar_conexao(self):
+        # Teste de ping antes de tentar conectar
+        if not self.rede.testar_ping():
+            self._mostrar_erro_rede("Não é possível estabelecer uma ligação com o servidor. Verifique a rede ou a firewall.")
+            return False
+
+        # Testa se o servidor está a usar o servidor correto
+        pong = self.rede.enviar('ping')
+        if not pong.get('ok') or pong.get('resultado') != 'pong':
+            self._mostrar_erro_rede("Servidor não está a executar o script ou não está inicializado.")
+            return False
+
+        # Verifica se o servidor tem comandos essenciais no 'help'
+        help_resp = self.rede.enviar('help')
+        if not help_resp.get('ok'):
+            self._mostrar_erro_rede("Não é possivel enviar comandos, verifique se o servidor ainda está em execução e se está a usar o script correto")
+            return False
+
+        categorias = help_resp.get('resultado', {}).get('categorias', {})
+        comandos_essenciais = ['autenticar', 'registar_cliente']
+
+        comandos_servidor = []
+        for categoria in categorias.values():
+            for comando in categoria:
+                comandos_servidor.append(comando)
+
+        todos_presentes = True
+        for comando in comandos_essenciais:
+            if comando not in comandos_servidor:
+                todos_presentes = False
+                break
+        if not todos_presentes:
+            self._mostrar_erro_rede("Servidor não está a executar o script correto ou está desatualizado (comandos essenciais ausentes).")
+            return False
+
+        return True
+
+    def _mostrar_erro_rede(self, mensagem):
+        self.mostrar_erro(mensagem)
+        self.mostrar_info("A tentar novamente em 5 segundos...")
+        time.sleep(5)
+        self.limpar_tela()
 
     def _atualizar_comandos(self):
         parametros = {}
@@ -159,15 +209,15 @@ class ClienteVendas:
         opcoes = []
         
         if 'compras' in self.comandos_disponiveis:
-            opcoes.append(('Compras (Listar, Comprar, Histórico)', self._menu_compras))
+            opcoes.append(('Compras', self._menu_compras))
             
         if 'pedidos' in self.comandos_disponiveis:
-            opcoes.append(('Gestão de Loja (Pedidos, Stock)', self._menu_loja))
+            opcoes.append(('Gestão de Loja', self._menu_loja))
             
         if 'administracao' in self.comandos_disponiveis or 'produtos' in self.comandos_disponiveis:
-            opcoes.append(('Administração (Produtos, Funcionários)', self._menu_administracao))
+            opcoes.append(('Administração', self._menu_administracao))
             
-        opcoes.append(('Minha Conta (Senha, Promoção, Logout)', self._menu_conta))
+        opcoes.append(('Minha Conta', self._menu_conta))
         
         # Sai do menu se o utilizador deslogar
         self.executar_menu(f"Menu Principal - {self.utilizador['username']} [{self.cargo}]", opcoes, condicao_de_saida_lambda=lambda: self.utilizador is None)
@@ -232,7 +282,6 @@ class ClienteVendas:
         
         # Sai do menu se deslogar
         self.executar_menu("Minha Conta", opcoes, condicao_de_saida_lambda=lambda: self.utilizador is None)
-
 
     def _fazer_login(self):
         self.mostrar_cabecalho("Login")
@@ -348,54 +397,48 @@ class ClienteVendas:
     def _listar_produtos(self):
         if not self.utilizador: 
             return
-        
-        # Primeiro listar as lojas disponíveis
         self.mostrar_cabecalho("Listar Produtos")
+        # Listar lojas antes de pedir o ID
         resposta_lojas = self.rede.enviar('listar_lojas')
-        
         if resposta_lojas.get('ok'):
             lojas = resposta_lojas.get('resultado', [])
             if not lojas:
                 self.mostrar_erro("Nenhuma loja disponível.")
                 self.pausar()
                 return
-            
             print("\nLojas disponíveis:")
             for loja in lojas:
                 print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
-            
-            loja_id = self.ler_texto("\nID da Loja (Enter para ver todas):")
-            
-            # Filtros adicionais
-            categoria = self.ler_texto("Categoria (Enter para ignorar):")
-            preco_maximo = self.ler_texto("Preço Máximo (Enter para ignorar):")
-            
-            parametros = {**self.utilizador}
-            if loja_id and loja_id.isdigit():
-                parametros['store_id'] = loja_id  # Enviar como string
-            if categoria: 
-                parametros['categoria'] = categoria
-            if preco_maximo:
-                try: 
-                    float(preco_maximo)  # Valida se é número
-                    parametros['preco_max'] = preco_maximo  # Enviar como string
-                except: 
-                    pass
-                
-            resposta = self.rede.enviar('list_products', parametros)
-            if resposta.get('ok'):
-                produtos = resposta.get('resultado', [])
-                if not produtos:
-                    self.mostrar_aviso("Nenhum produto encontrado.")
-                else:
-                    print(f"\n{Cores.NEGRITO}{'ID':<5} {'Nome':<20} {'Categoria':<15} {'Preço':<10} {'Stock':<8} {'Loja':<15}{Cores.NORMAL}")
-                    for produto in produtos:
-                        print(f"{produto['id']:<5} {produto['nome']:<20} {produto['categoria']:<15} {produto['preco']:<10.2f} {produto['stock']:<8} {produto['loja']:<15}")
-            else:
-                self.mostrar_erro(resposta.get('erro', 'Erro ao listar produtos'))
         else:
             self.mostrar_erro("Erro ao carregar lojas.")
-        
+            self.pausar()
+            return
+        loja_id = self.ler_texto("\nID da Loja (Enter para ver todas):")
+        # Filtros adicionais
+        categoria = self.ler_texto("Categoria (Enter para ignorar):")
+        preco_maximo = self.ler_texto("Preço Máximo (Enter para ignorar):")
+        parametros = {**self.utilizador}
+        if loja_id and loja_id.isdigit():
+            parametros['store_id'] = loja_id  # Enviar como string
+        if categoria: 
+            parametros['categoria'] = categoria
+        if preco_maximo:
+            try: 
+                float(preco_maximo)  # Valida se é número
+                parametros['preco_max'] = preco_maximo  # Enviar como string
+            except: 
+                pass
+        resposta = self.rede.enviar('list_products', parametros)
+        if resposta.get('ok'):
+            produtos = resposta.get('resultado', [])
+            if not produtos:
+                self.mostrar_aviso("Nenhum produto encontrado.")
+            else:
+                print(f"\n{Cores.NEGRITO}{'ID':<5} {'Nome':<20} {'Categoria':<15} {'Preço':<10} {'Stock':<8} {'Loja':<15}{Cores.NORMAL}")
+                for produto in produtos:
+                    print(f"{produto['id']:<5} {produto['nome']:<20} {produto['categoria']:<15} {produto['preco']:<10.2f} {produto['stock']:<8} {produto['loja']:<15}")
+        else:
+            self.mostrar_erro(resposta.get('erro', 'Erro ao listar produtos'))
         self.pausar()
 
     def _realizar_compra(self):
@@ -404,7 +447,6 @@ class ClienteVendas:
         
         self.mostrar_cabecalho("Realizar Compra")
         
-        # Passo 1: Selecionar loja
         resposta_lojas = self.rede.enviar('listar_lojas')
         if not resposta_lojas.get('ok') or not resposta_lojas.get('resultado'):
             self.mostrar_erro("Erro ao carregar lojas.")
@@ -422,7 +464,6 @@ class ClienteVendas:
             self.pausar()
             return
         
-        # Passo 2: Listar produtos dessa loja
         parametros_lista = {**self.utilizador, 'store_id': loja_id}
         resposta_produtos = self.rede.enviar('list_products', parametros_lista)
         
@@ -439,18 +480,15 @@ class ClienteVendas:
         
         print(f"\n{Cores.NEGRITO}Produtos disponíveis:{Cores.NORMAL}")
         print(f"{'Nome':<25} {'Categoria':<15} {'Preço':<10} {'Stock':<8}")
-        print("-" * 60)
         for produto in produtos:
             print(f"{produto['nome']:<25} {produto['categoria']:<15} {produto['preco']:<10.2f} {produto['stock']:<8}")
         
-        # Passo 3: Pedir nome do produto
         nome_produto = self.ler_texto("\nNome do Produto:")
         if not nome_produto:
             self.mostrar_erro("Nome do produto não pode estar vazio.")
             self.pausar()
             return
         
-        # Passo 4: Buscar produto por nome + loja
         parametros_busca = {
             **self.utilizador,
             'nome_produto': nome_produto,
@@ -479,14 +517,12 @@ class ClienteVendas:
         produto_info = resultado_busca
         self.mostrar_info(f"Produto: {produto_info['nome']} | Preço: {produto_info['preco']}€ | Stock: {produto_info['stock']}")
         
-        # Passo 5: Pedir quantidade
         quantidade = self.ler_texto("Quantidade:")
         if not quantidade.isdigit() or int(quantidade) <= 0:
             self.mostrar_erro("Quantidade deve ser um número maior que zero.")
             self.pausar()
             return
         
-        # Passo 6: Realizar venda
         try:
             itens = {str(produto_info['id']): int(quantidade)}
             resposta = self.rede.enviar('realizar_venda', {**self.utilizador, 'itens': itens})
@@ -540,12 +576,32 @@ class ClienteVendas:
     def _concluir_pedido(self):
         if not self.utilizador: 
             return
+
+        self.mostrar_cabecalho("Pedidos da Loja")
+        resposta_pedidos = self.rede.enviar('listar_pedidos', self.utilizador)
+        if resposta_pedidos.get('ok'):
+            pedidos = resposta_pedidos.get('resultado', [])
+            if not pedidos:
+                self.mostrar_aviso("Nenhum pedido disponível para concluir.")
+                self.pausar()
+                return
+            print("\nPedidos disponíveis:")
+            for pedido in pedidos:
+                print(f"  {pedido['id']}. Cliente: {pedido['cliente']} | Total: {pedido['total_price']:.2f}€ | Status: {pedido['status']}")
+        else:
+            self.mostrar_erro("Erro ao listar pedidos.")
+            self.pausar()
+            return
         pedido_id = self.ler_texto("ID do Pedido a concluir:")
         resposta = self.rede.enviar('concluir_pedido', {**self.utilizador, 'order_id': pedido_id})
-        if resposta.get('ok'):
+        if resposta.get('ok') and resposta.get('resultado') == 'SUCESSO':
             self.mostrar_sucesso("Pedido concluído com sucesso!")
         else:
-            self.mostrar_erro(resposta.get('erro'))
+            if resposta.get('resultado'):
+                erro = resposta.get('resultado') 
+            else:
+                erro = resposta.get('erro', 'Erro ao concluir pedido')
+            self.mostrar_erro(erro)
         self.pausar()
 
     def _verificar_stock(self):
@@ -568,33 +624,29 @@ class ClienteVendas:
         self.pausar()
 
     def _adicionar_produto(self):
-        if not self.utilizador: return
+        if not self.utilizador: 
+            return
         self.mostrar_cabecalho("Novo Produto")
-        
-        # Nome do produto com sugestões
-        nome = self._ler_com_sugestoes("Nome do Produto", "listar_nomes_produtos")
+        # Nome do produto com sugestões obrigatórias
+        nome = self._ler_com_sugestoes("Nome do Produto", "listar_nomes_produtos", permitir_vazio=False)
         if not nome:
             self.mostrar_erro("Nome não pode estar vazio.")
             self.pausar()
             return
-        
-        # Categoria com sugestões
-        categoria = self._ler_com_sugestoes("Categoria", "listar_categorias")
+        # Categoria com sugestões obrigatórias
+        categoria = self._ler_com_sugestoes("Categoria", "listar_categorias", permitir_vazio=False)
         if not categoria:
             self.mostrar_erro("Categoria não pode estar vazia.")
             self.pausar()
             return
-        
-        # Descrição com sugestões
-        descricao = self._ler_com_sugestoes("Descrição", "listar_descricoes")
+        # Descrição com sugestões obrigatórias
+        descricao = self._ler_com_sugestoes("Descrição", "listar_descricoes", permitir_vazio=False)
         if not descricao:
             self.mostrar_erro("Descrição não pode estar vazia.")
             self.pausar()
             return
-        
         preco = self.ler_texto("Preço:")
         stock = self.ler_texto("Stock:")
-        
         # Listar lojas para escolher
         resposta_lojas = self.rede.enviar('listar_lojas')
         if resposta_lojas.get('ok'):
@@ -603,34 +655,26 @@ class ClienteVendas:
                 self.mostrar_erro("Nenhuma loja disponível. Crie uma loja primeiro.")
                 self.pausar()
                 return
-            
             print("\nLojas disponíveis:")
             for loja in lojas:
                 print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
-        
         loja_id = self.ler_texto("\nID da Loja:")
-        
         try:
             parametros = {
                 **self.utilizador,
                 'nome': nome, 'categoria': categoria, 'descricao': descricao,
-                'preco': float(preco), 'stock': int(stock), 'store_id': int(loja_id)
+                'preco': preco, 'stock': stock, 'store_id': loja_id
             }
             resposta = self.rede.enviar('add_product', parametros)
             if resposta.get('ok'):
                 self.mostrar_sucesso("Produto adicionado!")
             else:
                 self.mostrar_erro(resposta.get('erro'))
-        except ValueError:
-            self.mostrar_erro("Valores numéricos inválidos.")
+        except Exception:
+            self.mostrar_erro("Valores inválidos.")
         self.pausar()
     
-    def _ler_com_sugestoes(self, label, acao_listar):
-        """
-        Lê input com sugestões de valores existentes
-        label: nome do campo (ex: "Categoria")
-        acao_listar: ação do servidor para buscar sugestões (ex: "listar_categorias")
-        """
+    def _ler_com_sugestoes(self, label, acao_listar, permitir_vazio=False):
         # Buscar sugestões do servidor
         resposta = self.rede.enviar(acao_listar)
         sugestoes = []
@@ -640,22 +684,26 @@ class ClienteVendas:
         
         if sugestoes:
             print(f"\n{Cores.CIANO}Valores existentes de {label}:{Cores.NORMAL}")
-            for i, sugestao in enumerate(sugestoes[:10], 1):  # Mostrar apenas 10 primeiros
+            for i, sugestao in enumerate(sugestoes, 1):  # Mostrar apenas 10 primeiros
                 print(f"  {i}. {sugestao}")
-            if len(sugestoes) > 10:
-                print(f"  ... e mais {len(sugestoes) - 10}")
             print(f"\n{Cores.AMARELO}Dica: Digite o número para selecionar ou escreva um novo valor{Cores.NORMAL}")
         
-        entrada = self.ler_texto(f"\n{label}:")
+        if not permitir_vazio:
+            prompt = f"\n{label}:" 
+        else:
+            prompt = f"{label} (vazio para manter):"
+        entrada = self.ler_texto(prompt)
         
+        # Se permitir vazio e entrada for vazia, retorna None
+        if permitir_vazio and not entrada:
+            return None
         # Se for número, tentar selecionar da lista
         if entrada.isdigit():
-            idx = int(entrada) - 1
-            if 0 <= idx < len(sugestoes):
-                valor_selecionado = sugestoes[idx]
-                print(f"{Cores.VERDE}✓ Selecionado: {valor_selecionado}{Cores.NORMAL}")
+            indice = int(entrada) - 1
+            if 0 <= indice < len(sugestoes):
+                valor_selecionado = sugestoes[indice]
+                print(f"{Cores.VERDE}Selecionado: {valor_selecionado}{Cores.NORMAL}")
                 return valor_selecionado
-        
         # Caso contrário, retornar o valor digitado
         return entrada
 
@@ -663,37 +711,56 @@ class ClienteVendas:
         if not self.utilizador: 
             return
         self.mostrar_cabecalho("Editar Produto")
-        
+        # Listar produtos antes de pedir o ID
+        resposta_produtos = self.rede.enviar('list_products', self.utilizador)
+        if resposta_produtos.get('ok'):
+            produtos = resposta_produtos.get('resultado', [])
+            if not produtos:
+                self.mostrar_aviso("Nenhum produto disponível para editar.")
+                self.pausar()
+                return
+            print("\nProdutos disponíveis:")
+            for produto in produtos:
+                print(f"  {produto['id']}. {produto['nome']} | Categoria: {produto['categoria']} | Stock: {produto['stock']} | Loja: {produto['loja']}")
+        else:
+            self.mostrar_erro("Erro ao listar produtos.")
+            self.pausar()
+            return
         produto_id = self.ler_texto("ID Produto:")
         if not produto_id or not produto_id.isdigit():
             self.mostrar_erro("ID inválido.")
             self.pausar()
             return
-        
         self.mostrar_info("Deixe em branco para não alterar ou escolha da lista de sugestões")
-        
         # Nome com sugestões
-        print(f"\n{Cores.AMARELO}--- Novo Nome ---{Cores.NORMAL}")
-        novo_nome = self._ler_com_sugestoes_opcional("Nome do Produto", "listar_nomes_produtos")
-        
+        print(f"\n{Cores.AMARELO}Novo Nome{Cores.NORMAL}")
+        novo_nome = self._ler_com_sugestoes("Nome do Produto", "listar_nomes_produtos", permitir_vazio=True)
         # Categoria com sugestões
-        print(f"\n{Cores.AMARELO}--- Nova Categoria ---{Cores.NORMAL}")
-        nova_categoria = self._ler_com_sugestoes_opcional("Categoria", "listar_categorias")
-        
+        print(f"\n{Cores.AMARELO}Nova Categoria{Cores.NORMAL}")
+        nova_categoria = self._ler_com_sugestoes("Categoria", "listar_categorias", permitir_vazio=True)
         # Descrição com sugestões
-        print(f"\n{Cores.AMARELO}--- Nova Descrição ---{Cores.NORMAL}")
-        nova_descricao = self._ler_com_sugestoes_opcional("Descrição", "listar_descricoes")
-        
+        print(f"\n{Cores.AMARELO}Nova Descrição{Cores.NORMAL}")
+        nova_descricao = self._ler_com_sugestoes("Descrição", "listar_descricoes", permitir_vazio=True)
         novo_preco = self.ler_texto("\nNovo Preço:")
         novo_stock = self.ler_texto("Novo Stock:")
-        
+
         parametros = {**self.utilizador, 'product_id': produto_id}
-        if novo_nome: parametros['novo_nome'] = novo_nome
-        if nova_categoria: parametros['nova_categoria'] = nova_categoria
-        if novo_preco: parametros['novo_preco'] = novo_preco
-        if novo_stock: parametros['novo_stock'] = novo_stock
-        if nova_descricao: parametros['nova_descricao'] = nova_descricao
-        
+
+        if novo_nome: 
+            parametros['novo_nome'] = novo_nome
+
+        if nova_categoria: 
+            parametros['nova_categoria'] = nova_categoria
+
+        if novo_preco: 
+            parametros['novo_preco'] = novo_preco
+
+        if novo_stock: 
+            parametros['novo_stock'] = novo_stock
+
+        if nova_descricao: 
+            parametros['nova_descricao'] = nova_descricao
+
         if self.cargo == 'admin':
             # Listar lojas
             resposta_lojas = self.rede.enviar('listar_lojas')
@@ -703,10 +770,10 @@ class ClienteVendas:
                     print("\nLojas disponíveis:")
                     for loja in lojas:
                         print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
-            
             novo_id_da_loja = self.ler_texto("\nNovo ID Loja:")
-            if novo_id_da_loja: parametros['novo_id_da_loja'] = novo_id_da_loja
-        
+            if novo_id_da_loja: 
+                parametros['novo_id_da_loja'] = novo_id_da_loja
+
         resposta = self.rede.enviar('editar_produto', parametros)
         if resposta.get('ok'):
             self.mostrar_sucesso("Produto atualizado!")
@@ -714,78 +781,106 @@ class ClienteVendas:
             self.mostrar_erro(resposta.get('erro'))
         self.pausar()
     
-    def _ler_com_sugestoes_opcional(self, label, acao_listar):
-        """
-        Similar ao _ler_com_sugestoes, mas permite deixar em branco
-        """
-        # Buscar sugestões do servidor
-        resposta = self.rede.enviar(acao_listar)
-        sugestoes = []
-        
-        if resposta.get('ok'):
-            sugestoes = resposta.get('resultado', [])
-        
-        if sugestoes:
-            print(f"{Cores.CIANO}Valores existentes:{Cores.NORMAL}")
-            for i, sugestao in enumerate(sugestoes[:10], 1):
-                print(f"  {i}. {sugestao}")
-            if len(sugestoes) > 10:
-                print(f"  ... e mais {len(sugestoes) - 10}")
-        
-        entrada = self.ler_texto(f"{label} (vazio para manter):")
-        
-        # Se vazio, retornar None
-        if not entrada:
-            return None
-        
-        # Se for número, tentar selecionar da lista
-        if entrada.isdigit() and sugestoes:
-            idx = int(entrada) - 1
-            if 0 <= idx < len(sugestoes):
-                valor_selecionado = sugestoes[idx]
-                print(f"{Cores.VERDE}✓ Selecionado: {valor_selecionado}{Cores.NORMAL}")
-                return valor_selecionado
-        
-        # Caso contrário, retornar o valor digitado
-        return entrada
-
     def _remover_produto(self):
         if not self.utilizador:
+            return
+        # Listar produtos antes de pedir o ID
+        self.mostrar_cabecalho("Remover Produto")
+        resposta_produtos = self.rede.enviar('list_products', self.utilizador)
+        if resposta_produtos.get('ok'):
+            produtos = resposta_produtos.get('resultado', [])
+            if not produtos:
+                self.mostrar_aviso("Nenhum produto disponível para remover.")
+                self.pausar()
+                return
+            print("\nProdutos disponíveis:")
+            for produto in produtos:
+                print(f"  {produto['id']}. {produto['nome']} | Categoria: {produto['categoria']} | Stock: {produto['stock']} | Loja: {produto['loja']}")
+        else:
+            self.mostrar_erro("Erro ao listar produtos.")
+            self.pausar()
             return
         produto_id = self.ler_texto("ID Produto a remover:")
         confirmacao = self.ler_texto("Tem a certeza? (s/n):")
         if confirmacao.lower() != 's':
             return
-        
         resposta = self.rede.enviar('deletar_produto', {**self.utilizador, 'product_id': produto_id})
-        if resposta.get('ok'):
+        if resposta.get('ok') and resposta.get('resultado') == 'SUCESSO':
             self.mostrar_sucesso("Produto removido!")
         else:
-            self.mostrar_erro(resposta.get('erro'))
+            if resposta.get('resultado'):
+                erro = resposta.get('resultado')
+            else:
+                erro = resposta.get('erro', 'Erro ao remover produto')
+            self.mostrar_erro(erro)
         self.pausar()
 
     def _criar_funcionario(self):
         if not self.utilizador: 
             return
         self.mostrar_cabecalho("Criar Funcionario")
-        utilizador = self.ler_texto("Username:")
-        senha = self.ler_segredo("Password:")
         tipo = self.ler_texto("Tipo (admin/vendedor):")
         loja_id = ""
         if tipo == 'vendedor':
+            # Listar lojas antes de pedir o ID
+            resposta_lojas = self.rede.enviar('listar_lojas')
+            if resposta_lojas.get('ok'):
+                lojas = resposta_lojas.get('resultado', [])
+                if not lojas:
+                    self.mostrar_erro("Nenhuma loja disponível para associar ao vendedor.")
+                    self.pausar()
+                    return
+                print("\nLojas disponíveis:")
+                for loja in lojas:
+                    print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
+            else:
+                self.mostrar_erro("Erro ao listar lojas.")
+                self.pausar()
+                return
             loja_id = self.ler_texto("ID Loja:")
-            
+        utilizador = self.ler_texto("Username:")
+        senha = self.ler_segredo("Password:")
         parametros = {
             **self.utilizador,
             'username_func': utilizador, 'password_func': senha,
             'tipo': tipo, 'loja_id': loja_id
         }
-        
         resposta = self.rede.enviar('criar_funcionario', parametros)
-        if resposta.get('ok'):
+        resultado = resposta.get('resultado')
+        if resposta.get('ok') and resultado == 'UTILIZADOR_CRIADO':
             self.mostrar_sucesso("Funcionário criado!")
         else:
-            self.mostrar_erro(resposta.get('erro'))
+            if resultado is not None:
+                erro = resultado 
+            else:
+                erro = resposta.get('erro', 'Erro ao criar funcionário')
+            self.mostrar_erro(erro)
+        self.pausar()
+    def _apagar_conta(self):
+        if not self.utilizador:
+            return
+        username = self.utilizador.get('username')
+        confirmacao = self.ler_texto(f"Para apagar sua conta, digite exatamente: 'Tenho a certeza {username} que pretendo apagar a conta juntamente com todos os meus dados'")
+        frase_correta = f"Tenho a certeza {username} que pretendo apagar a conta juntamente com todos os meus dados"
+        if confirmacao != frase_correta:
+            self.mostrar_aviso("Confirmação incorreta. Operação cancelada.")
+            self.pausar()
+            return
+        resposta = self.rede.enviar('apagar_utilizador', {**self.utilizador})
+        resultado = resposta.get('resultado')
+        if resposta.get('ok') and resultado == 'REMOVIDO':
+            self.mostrar_sucesso("Conta apagada com sucesso!")
+            self.utilizador = None
+            self.cargo = None
+        elif resultado == 'NAO_PERMITIDO':
+            self.mostrar_erro("Por motivos de segurança essa ação não pode ser efetuada agora. Solicite a um administrador para limpar todos os seus dados.")
+        else:
+            if resultado is not None:
+                erro = resultado 
+            else:
+                erro = resposta.get('erro', 'Erro ao apagar conta')
+            self.mostrar_erro(erro)
+
         self.pausar()
 
     def _alterar_senha(self):
@@ -824,7 +919,6 @@ class ClienteVendas:
             self.mostrar_erro(resposta.get('erro', 'Erro ao promover'))
         self.pausar()
     
-    # Gestão de Lojas (Admin)
     def _criar_loja(self):
         if not self.utilizador:
             return
@@ -860,8 +954,6 @@ class ClienteVendas:
         if not self.utilizador:
             return
         self.mostrar_cabecalho("Editar Loja")
-        
-        # Listar lojas primeiro
         resposta_lojas = self.rede.enviar('listar_lojas')
         if resposta_lojas.get('ok'):
             lojas = resposta_lojas.get('resultado', [])
@@ -869,40 +961,36 @@ class ClienteVendas:
                 self.mostrar_erro("Nenhuma loja disponível.")
                 self.pausar()
                 return
-            
             print("\nLojas disponíveis:")
             for loja in lojas:
                 print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
-        
+        else:
+            self.mostrar_erro("Erro ao listar lojas.")
+            self.pausar()
+            return
         store_id = self.ler_texto("\nID da Loja a editar:")
         if not store_id or not store_id.isdigit():
             self.mostrar_erro("ID inválido.")
             self.pausar()
             return
-        
         self.mostrar_info("Deixe em branco para não alterar")
         novo_nome = self.ler_texto("Novo Nome:")
         nova_localizacao = self.ler_texto("Nova Localização:")
-        
         if not novo_nome and not nova_localizacao:
             self.mostrar_aviso("Nenhuma alteração foi feita.")
             self.pausar()
             return
-        
         parametros = {**self.utilizador, 'store_id': store_id}
         if novo_nome:
             parametros['novo_nome'] = novo_nome
         if nova_localizacao:
             parametros['nova_localizacao'] = nova_localizacao
-        
         resposta = self.rede.enviar('editar_loja', parametros)
         if resposta.get('ok'):
             resultado = resposta.get('resultado', '')
-            # Verificar se é mensagem de sucesso
             if resultado == 'ATUALIZADO':
                 self.mostrar_sucesso("Loja atualizada!")
             else:
-                # Qualquer outro resultado é erro
                 self.mostrar_erro(f"{resultado}")
         else:
             self.mostrar_erro(resposta.get('erro', 'Erro ao editar loja'))
@@ -912,8 +1000,7 @@ class ClienteVendas:
         if not self.utilizador:
             return
         self.mostrar_cabecalho("Remover Loja")
-        
-        # Listar lojas primeiro
+        # Listar lojas
         resposta_lojas = self.rede.enviar('listar_lojas')
         if resposta_lojas.get('ok'):
             lojas = resposta_lojas.get('resultado', [])
@@ -921,33 +1008,30 @@ class ClienteVendas:
                 self.mostrar_erro("Nenhuma loja disponível.")
                 self.pausar()
                 return
-            
             print("\nLojas disponíveis:")
             for loja in lojas:
                 print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
-        
+        else:
+            self.mostrar_erro("Erro ao listar lojas.")
+            self.pausar()
+            return
         store_id = self.ler_texto("\nID da Loja a remover:")
         if not store_id or not store_id.isdigit():
             self.mostrar_erro("ID inválido.")
             self.pausar()
             return
-        
         confirmacao = self.ler_texto("Tem certeza? Esta ação não pode ser desfeita. (s/n):")
         if confirmacao.lower() != 's':
             self.mostrar_info("Operação cancelada.")
             self.pausar()
             return
-        
         parametros = {**self.utilizador, 'store_id': store_id}
         resposta = self.rede.enviar('apagar_loja', parametros)
-        
         if resposta.get('ok'):
             resultado = resposta.get('resultado', '')
-            # Verificar se é mensagem de sucesso
             if resultado == 'REMOVIDO':
                 self.mostrar_sucesso("Loja removida com sucesso!")
             else:
-                # Qualquer outro resultado é erro
                 if resultado == 'ERRO_PROCESSAMENTO':
                     self.mostrar_erro("Não é possível remover: loja tem produtos ou vendedores associados")
                 else:
@@ -956,7 +1040,6 @@ class ClienteVendas:
             self.mostrar_erro(resposta.get('erro', 'Erro ao remover loja'))
         self.pausar()
     
-    # Gestão de Utilizadores (Admin)
     def _listar_utilizadores(self):
         if not self.utilizador:
             return
@@ -1023,7 +1106,6 @@ class ClienteVendas:
                 self.mostrar_info("Nenhum utilizador encontrado com os filtros aplicados.")
             else:
                 print(f"\n{Cores.CIANO}{'ID':<5} | {'Username':<20} | {'Cargo':<12} | {'Loja':<25}{Cores.NORMAL}")
-                print("-" * 70)
                 
                 for user in utilizadores:
                     id_str = str(user['id'])
@@ -1054,7 +1136,7 @@ def run_Cliente(host='127.0.0.1', port=5000, debug = False):
         app = ClienteVendas(host, port)
         app.iniciar()
     except (KeyboardInterrupt, EOFError):
-        print(f"\n\n{Cores.ROXO}Programa encerrado pelo usuário.{Cores.NORMAL}")
+        print(f"\n\n{Cores.ROXO}Programa encerrado pelo utilizador.{Cores.NORMAL}")
     except Exception as e:
         print(f"{Cores.VERMELHO}{Cores.NEGRITO}Erro fatal: {e}{Cores.NORMAL}")
 

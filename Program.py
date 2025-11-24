@@ -1,3 +1,6 @@
+# Mensagem informativa sobre problemas de rede na escola
+print("\nATENÇÃO: Caso estejam a testar na escola onde o projeto foi desenvolvido, e um computador cliente não se consiga comunicar com o computador servidor, foi identificado um problema relacionado à rede. A solução é colocar o servidor em outro computador.\n")
+
 import subprocess
 import sys
 import socket
@@ -103,7 +106,7 @@ def iniciar_servidor(debug=False):
         import server
         server.run(host,port,debug)
     except (KeyboardInterrupt, EOFError):
-        print(f"\n\n{Cores.ROXO}Servidor encerrado pelo utilizador.{Cores.NORMAL}")
+            print(f"\n\n{Cores.ROXO}Servidor encerrado pelo utilizador.{Cores.NORMAL}")
     except Exception as e:
         print(f"\n{Cores.VERMELHO}Erro ao iniciar servidor: {e}{Cores.NORMAL}")
         input("\nPressione ENTER para voltar ao menu...")
@@ -130,7 +133,7 @@ def iniciar_cliente(debug=False):
         import client
         client.run(host, port, debug)
     except (KeyboardInterrupt, EOFError):
-        print(f"\n\n{Cores.ROXO}Cliente encerrado pelo utilizador.{Cores.NORMAL}")
+            print(f"\n\n{Cores.ROXO}Cliente encerrado pelo utilizador.{Cores.NORMAL}")
     except Exception as e:
         print(f"\n{Cores.VERMELHO}Erro ao iniciar cliente: {e}{Cores.NORMAL}")
         input("\nPressione ENTER para voltar ao menu...")

@@ -54,7 +54,7 @@ class DatabaseManager:
             "CREATE TABLE IF NOT EXISTS categories (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(50) UNIQUE)",
             "CREATE TABLE IF NOT EXISTS product_names (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(100) UNIQUE)",
             "CREATE TABLE IF NOT EXISTS descriptions (id INT AUTO_INCREMENT PRIMARY KEY, texto TEXT)",
-            "CREATE TABLE IF NOT EXISTS stores (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(50), localizacao VARCHAR(100))",
+            "CREATE TABLE IF NOT EXISTS stores (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(50) UNIQUE, localizacao VARCHAR(100))",
             
             # Utilizadores
             """CREATE TABLE IF NOT EXISTS users (
