@@ -34,8 +34,8 @@ class Produto:
             return Mensagem.ERRO_DUPLICADO
 
     @staticmethod
-    def listar_todos(bd, filtros=""):
-        # O sql pega os valores das várias tabelas para apresentar uma visão completa do produto
+    def listar_todos(bd, store_id=None, filtros_extras=None):
+        # CORREÇÃO SQL INJECTION: Usar parametros bindados
         sql = """
             SELECT products.id, product_names.nome, categories.nome as categoria, descriptions.texto as descricao, products.preco, products.stock, stores.nome as loja
             FROM products
@@ -43,29 +43,42 @@ class Produto:
             JOIN categories ON products.category_id = categories.id
             JOIN descriptions ON products.description_id = descriptions.id
             JOIN stores ON products.store_id = stores.id
-        """ + filtros
+        """
+        
+        parametoetos = []
+        clauses = []
 
-        bd.cursor.execute(sql)
+        if store_id is not None:
+            clauses.append("products.store_id = %s")
+            parametoetos.append(store_id)
+            
+        # Exemplo de filtros extras (dicionário)
+        if filtros_extras:
+            if 'categoria' in filtros_extras:
+                clauses.append("categories.nome = %s")
+                parametoetos.append(filtros_extras['categoria'])
+            if 'preco_max' in filtros_extras:
+                clauses.append("products.preco <= %s")
+                parametoetos.append(filtros_extras['preco_max'])
+
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+
+        bd.cursor.execute(sql, tuple(parametoetos))
         resultado = bd.cursor.fetchall()
 
-        # Converter Decimal para float
-        for resultado in resultado: # Edita dentro do proprio objeto resultado sem criar um novo objeto
-            resultado['preco'] = float(resultado['preco'])
+        for res in resultado:
+            res['preco'] = float(res['preco'])
 
         return resultado
 
     @staticmethod
     def verificar_stock_baixo(bd):
-        bd.cursor.execute("""
-            SELECT p.id, n.nome, p.stock, s.nome as loja
-            FROM products p JOIN product_names n ON p.product_name_id = n.id 
-            JOIN stores s ON p.store_id = s.id
-            WHERE p.stock < 5
-        """)
-        return bd.cursor.fetchall()
+        # Método removido da classe Produto e movido para Vendedor
+        pass
 
     @staticmethod
-    def atualizar_produto(bd, id_produto, novo_preco=None, novo_stock=None, nova_descricao=None, nova_categoria=None, novo_id_da_loja=None):
+    def atualizar_produto(bd, id_produto, novo_preco=None, novo_stock=None, nova_descricao=None, nova_categoria=None, novo_id_da_loja=None, novo_nome=None):
         bd.cursor.execute("SELECT store_id FROM products WHERE id = %s", (id_produto,))
         resultado = bd.cursor.fetchone()
         if not resultado:
@@ -90,6 +103,11 @@ class Produto:
             campos.append("category_id=%s")
             valores.append(categoria_id)
 
+        if novo_nome is not None:
+            name_id = Produto._get_or_create_id(bd, "product_names", "nome", novo_nome)
+            campos.append("product_name_id=%s")
+            valores.append(name_id)
+
         if novo_id_da_loja is not None:
             if Vendedor.verificar_loja_valida(bd, novo_id_da_loja) is False:
                 return Mensagem.LOJA_NAO_ENCONTRADA
@@ -97,12 +115,11 @@ class Produto:
             campos.append("store_id=%s")
             valores.append(novo_id_da_loja)
 
-        if not campos: # Se não há campos para atualizar
+        if not campos: 
             return Mensagem.ATUALIZADO
         
         valores.append(id_produto)
 
-        # Atualiza os campos necessários
         try:
             bd.cursor.execute(f"UPDATE products SET {','.join(campos)} WHERE id=%s", tuple(valores))
             bd.conn.commit()
@@ -174,18 +191,27 @@ class Cliente(User):
     @staticmethod
     def registar(bd, username, password):
         try:
+            # Clientes não têm loja associada, logo store_id é NULL
             sql = "INSERT INTO users (username, password, cargo) VALUES (%s, %s, 'cliente')"
             bd.cursor.execute(sql, (username, password))
             bd.conn.commit()
             return Mensagem.UTILIZADOR_CRIADO
         except:
             return Mensagem.UTILIZADOR_JA_EXISTE
-        
-    def realizar_venda(self, itens, id_cliente_alvo=None):
-        if id_cliente_alvo is not None:
-            comprador = id_cliente_alvo
-        else:
-            comprador = self.id
+
+    def promover_a_admin(self):
+        if self.cargo == 'admin':
+            return Mensagem.O_PERFIL_JA_E_ADMIN
+        try:
+            self.bd.cursor.execute("UPDATE users SET cargo = 'admin' WHERE id = %s", (self.id,))
+            self.bd.conn.commit()
+            return Mensagem.SUCESSO
+        except:
+            self.bd.conn.rollback()
+            return Mensagem.ERRO_GENERICO
+    def realizar_venda(self, itens, status_inicial='pendente'):
+        # Refatorado: Cliente usa sempre o seu ID como comprador
+        comprador = self.id
 
         if not itens or not isinstance(itens, dict):
             return Mensagem.ERRO_PROCESSAMENTO
@@ -202,20 +228,21 @@ class Cliente(User):
                 if not product or product['stock'] < quantidade:
                     return Mensagem.STOCK_INSUFICIENTE
 
-                if loja_pedido is None: # Primeiro produto
+                if loja_pedido is None: 
                     loja_pedido = product['store_id']
-                elif loja_pedido != product['store_id']: # Verifica se todos os produtos são da mesma loja
+                elif loja_pedido != product['store_id']: 
                     return Mensagem.ERRO_PROCESSAMENTO
 
                 unit_price = float(product['preco'])
                 produtos_info.append((product_id, quantidade, unit_price))
                 total_price += unit_price * quantidade
 
+            # Cria o pedido com o status definido (pendente para cliente, concluida para vendedor)
             self.bd.cursor.execute(
-                "INSERT INTO orders (buyer_user_id, store_id, status, total_price) VALUES (%s, %s, 'pendente', %s)",
-                (comprador, loja_pedido, total_price)
+                "INSERT INTO orders (buyer_user_id, store_id, status, total_price) VALUES (%s, %s, %s, %s)",
+                (comprador, loja_pedido, status_inicial, total_price)
             )
-            order_id = self.bd.cursor.lastrowid # ID do pedido criado
+            order_id = self.bd.cursor.lastrowid 
 
             for product_id, quantidade, unit_price in produtos_info:
                 self.bd.cursor.execute(
@@ -225,7 +252,9 @@ class Cliente(User):
                 self.bd.cursor.execute("UPDATE products SET stock = stock - %s WHERE id = %s", (quantidade, product_id))
 
             self.bd.conn.commit()
-            return (Mensagem.PENDENTE, {'order_id': order_id, 'total_price': total_price})
+            
+            msg_retorno = Mensagem.PENDENTE if status_inicial == 'pendente' else Mensagem.CONCLUIDA
+            return (msg_retorno, {'order_id': order_id, 'total_price': total_price})
         except Exception:
             self.bd.conn.rollback()
             return Mensagem.ERRO_PROCESSAMENTO
@@ -265,26 +294,46 @@ class Vendedor(Cliente):
             return Mensagem.UTILIZADOR_CRIADO
         except:
             return Mensagem.UTILIZADOR_JA_EXISTE
-        
-    def atualizar_produto(self, id_produto, novo_preco=None, novo_stock=None, nova_descricao=None, nova_categoria=None):
-        resultado_verificacao = self._verificar_pedido_permissao_vendedor(id_produto)
-        if resultado_verificacao is not None:
-            return resultado_verificacao
-        
-        # Nunca vai passar um novo id de loja pois o vendedor apenas pode editar os produtos da sua propria loja
-        # Pois não faria sentido mudar a loja do produto pois ele não tem permissão
-        return Produto.atualizar_produto(self.bd, id_produto, novo_preco, novo_stock, nova_descricao, nova_categoria)
+
+    def atualizar_produto(self, id_produto, novo_preco=None, novo_stock=None, nova_descricao=None, nova_categoria=None, novo_nome=None):
+        # Vendedor só pode atualizar produtos da sua loja
+        verificacao = self._verificar_pedido_permissao_vendedor(id_produto, verificar_pedido_status=False)
+        if verificacao is not None:
+            return verificacao
+            
+        return Produto.atualizar_produto(self.bd, id_produto, novo_preco, novo_stock, nova_descricao, nova_categoria, novo_nome=novo_nome)
+
+    @staticmethod
+    def verificar_stock_baixo(bd):
+        try:
+            # Verifica produtos com stock < 5
+            sql = """
+                SELECT p.id, pn.nome, p.stock, s.nome as loja
+                FROM products p
+                JOIN product_names pn ON p.product_name_id = pn.id
+                JOIN stores s ON p.store_id = s.id
+                WHERE p.stock < 5
+            """
+            bd.cursor.execute(sql)
+            produtos = bd.cursor.fetchall()
+            
+            if not produtos:
+                return Mensagem.SUCESSO 
+            
+            return (Mensagem.ALERTA_STOCK_BAIXO, produtos)
+        except Exception:
+            return Mensagem.ERRO_GENERICO
 
     def concluir_pedido(self, order_id):
+        # Simplificado: Remove verificação de 'confirmada', passa direto para 'concluida'
         resultado_verificacao = self._verificar_pedido_permissao_vendedor(order_id, verificar_pedido_status=True)
         if resultado_verificacao is not None:
             return resultado_verificacao
 
         try:
-            # Atualiza o status para 'confirmada' e guarda qual vendedor confirmou
             self.bd.cursor.execute(
                 "UPDATE orders SET status=%s, seller_user_id=%s WHERE id=%s", 
-                ('confirmada', self.id, order_id)
+                ('concluida', self.id, order_id)
             )
             self.bd.conn.commit()
             return Mensagem.CONCLUIDA
@@ -294,28 +343,22 @@ class Vendedor(Cliente):
     
     def listar_pedidos(self, filtro_status=None):
         try:
-            if filtro_status and filtro_status not in ['pendente', 'concluida']:
-                return []
+            # Correção SQL: Alternar lógica baseada no filtro
+            sql = """
+                SELECT o.id, o.order_date, u.username as cliente, o.total_price, o.status
+                FROM orders o
+                JOIN users u ON o.buyer_user_id = u.id
+                WHERE o.store_id = %s
+            """
+            parametoetos = [self.store_id]
+
+            if filtro_status and filtro_status in ['pendente', 'concluida']:
+                sql += " AND o.status = %s"
+                parametoetos.append(filtro_status)
             
-            if filtro_status is not None:
-                sql = """
-                    SELECT o.id, o.order_date, u.username as cliente, o.total_price, o.status
-                    FROM orders o
-                    JOIN users u ON o.buyer_user_id = u.id
-                    WHERE o.store_id = %s AND o.status = %s
-                    ORDER BY o.order_date DESC
-                """
-                self.bd.cursor.execute(sql, (self.store_id, filtro_status))
-            else: # Sem o filtro
-                sql = """
-                    SELECT o.id, o.order_date, u.username as cliente, o.total_price, o.status
-                    FROM orders o
-                    JOIN users u ON o.buyer_user_id = u.id
-                    WHERE o.store_id = %s
-                    ORDER BY o.order_date DESC
-                """
-                self.bd.cursor.execute(sql, (self.store_id,))
+            sql += " ORDER BY o.order_date DESC"
             
+            self.bd.cursor.execute(sql, tuple(parametoetos))
             resultado = self.bd.cursor.fetchall()
 
             for linha in resultado:
@@ -326,9 +369,12 @@ class Vendedor(Cliente):
         except Exception:
             return []
         
-    def _verificar_pedido_permissao_vendedor(self, order_id, verificar_pedido_status=False):
-        # Selecionar os produtos que estão na mesma loja do que o vendedor
-        self.bd.cursor.execute("SELECT store_id, status FROM orders WHERE id=%s", (order_id,))
+    def _verificar_pedido_permissao_vendedor(self, id_alvo, verificar_pedido_status=False):
+        # Verifica se é produto ou pedido para saber qual tabela consultar
+        # Simplificação: assume que id_alvo é order_id se verificar_pedido_status=True
+        tabela = "orders" if verificar_pedido_status else "products"
+        
+        self.bd.cursor.execute(f"SELECT store_id FROM {tabela} WHERE id=%s", (id_alvo,))
         resultado = self.bd.cursor.fetchone()
 
         if not resultado:
@@ -337,10 +383,14 @@ class Vendedor(Cliente):
         if resultado['store_id'] != self.store_id:
             return Mensagem.ERRO_PERMISSAO
 
-        if verificar_pedido_status is not None and resultado['status'] != 'pendente':
-            return Mensagem.ERRO_PROCESSAMENTO
+        if verificar_pedido_status and tabela == "orders":
+             # Se for pedido, verifica se está pendente antes de concluir
+             self.bd.cursor.execute("SELECT status FROM orders WHERE id=%s", (id_alvo,))
+             res_status = self.bd.cursor.fetchone()
+             if res_status and res_status['status'] != 'pendente':
+                 return Mensagem.ERRO_PROCESSAMENTO
 
-        return None # Quando tem permissão
+        return None
 
     @staticmethod
     def verificar_loja_valida(bd, store_id):
@@ -377,8 +427,8 @@ class Admin(Vendedor):
         
         return Produto.criar(self.bd, id_da_loja_do_produto, nome, categoria, descricao, preco, stock)
 
-    def atualizar_produto(self, id_produto, novo_preco=None, novo_stock=None, nova_descricao=None, nova_categoria=None):
-        return Produto.atualizar_produto(self.bd, id_produto, novo_preco, novo_stock, nova_descricao, nova_categoria)
+    def atualizar_produto(self, id_produto, novo_preco=None, novo_stock=None, nova_descricao=None, nova_categoria=None, novo_nome=None, novo_id_da_loja=None):
+        return Produto.atualizar_produto(self.bd, id_produto, novo_preco, novo_stock, nova_descricao, nova_categoria, novo_id_da_loja, novo_nome)
 
     def remover_produto(self, id_produto):
         Produto.remover_produto(self.bd,id_produto)

@@ -2,6 +2,7 @@ import json
 import socketserver
 import threading
 import socket
+import os
 from database import DatabaseManager
 from entities import User, Admin, Vendedor, Cliente, Produto
 from enums import Mensagem
@@ -33,11 +34,11 @@ class GestorComandos(socketserver.StreamRequestHandler):
             return None
         
         try:
-            params = json.loads(bytes.decode('utf-8')) # json loads convete os bytes para um dicionário
-            if not isinstance(params, dict):
+            parametos = json.loads(bytes.decode('utf-8')) # json loads convete os bytes para um dicionário
+            if not isinstance(parametos, dict):
                 return None
             
-            return params
+            return parametos
         except Exception as erro:
             self._enviar_resposta(False, erro=f'JSON inválido: {erro}')
             return None
@@ -85,7 +86,7 @@ def get_help_commands(user):
     # Comandos apenas para vendedores autenticados
     vendedor_commands = {
         'compras': ['list_products', 'realizar_venda', 'ver_meu_historico'],
-        'pedidos': ['confirmar_pedido', 'listar_pedidos'],
+        'pedidos': ['concluir_pedido', 'listar_pedidos', 'verificar_stock_baixo'],
         'administracao': ['editar_produto'],
         'autenticacao': ['promover_para_admin'],
         'utilitarios': ['editar_senha']
@@ -96,7 +97,7 @@ def get_help_commands(user):
         'autenticacao': ['criar_funcionario'],
         'compras': ['list_products', 'realizar_venda', 'ver_meu_historico'],
         'produtos': ['add_product', 'editar_produto', 'deletar_produto'],
-        'pedidos': ['concluir_pedido_admin'],
+        'pedidos': ['concluir_pedido'],
         'utilitarios': ['editar_senha']
     }
     
@@ -140,7 +141,11 @@ def Aplicar_Acao(bd, acao, parametros):
 
         case 'list_products':
             id_loja = parametros.get('store_id') # Pode ser None, se user == vendedor
-            return listar_produtos(user, id_loja) # listar produtos com possível filtro por loja, e pela loja do vendedor
+            filtros = {}
+            if 'categoria' in parametros: filtros['categoria'] = parametros['categoria']
+            if 'preco_max' in parametros: filtros['preco_max'] = parametros['preco_max']
+            
+            return listar_produtos(user, id_loja, filtros)
 
         case 'registar_cliente':
             username = parametros.get('username')
@@ -152,13 +157,7 @@ def Aplicar_Acao(bd, acao, parametros):
             if not username or not password:
                 return Mensagem.CREDENCIAIS_INVALIDAS
             
-            try:
-                bd.cursor.execute("INSERT INTO users (username, password, role_type) VALUES (%s, %s, 'cliente')", (username, password))
-                bd.conn.commit()
-                return Mensagem.UTILIZADOR_CRIADO
-            except Exception:
-                bd.conn.rollback()
-                return Mensagem.UTILIZADOR_JA_EXISTE
+            return Cliente.registar(bd, username, password)
 
         case 'autenticar':
             if user is None:
@@ -175,16 +174,7 @@ def Aplicar_Acao(bd, acao, parametros):
             if not chave or chave != Chave_De_Criacao_de_Admin:
                 return Mensagem.PERMISSAO_NEGADA
             
-            if isinstance(user, Admin):
-                return Mensagem.O_PERFIL_JA_E_ADMIN
-            
-            try:
-                bd.cursor.execute("UPDATE users SET role_type = 'admin' WHERE id = %s", (user.id,)) # "," pois é uma tupla
-                bd.conn.commit()
-                return Mensagem.SUCESSO
-            except Exception:
-                bd.conn.rollback()
-                return Mensagem.ERRO_GENERICO
+            return user.promover_a_admin()
             
         case 'editar_senha':
             if user is None:
@@ -268,15 +258,18 @@ def Aplicar_Acao(bd, acao, parametros):
             novo_preco = parametros.get('novo_preco')
             novo_stock = parametros.get('novo_stock')
             nova_descricao = parametros.get('nova_descricao')
+            novo_nome = parametros.get('novo_nome')
+            nova_categoria = parametros.get('nova_categoria')
+            novo_id_da_loja = parametros.get('novo_id_da_loja')
 
             if not product_id:
                 return Mensagem.NAO_ENCONTRADO
             
             # Admin pode editar qualquer produto, Vendedor apenas de sua loja
             if isinstance(user, Admin):
-                result = user.atualizar_produto(product_id, novo_preco, novo_stock, nova_descricao)
+                result = user.atualizar_produto(product_id, novo_preco, novo_stock, nova_descricao, nova_categoria, novo_nome, novo_id_da_loja)
             elif isinstance(user, Vendedor):
-                result = user.atualizar_produto(product_id, novo_preco, novo_stock, nova_descricao)
+                result = user.atualizar_produto(product_id, novo_preco, novo_stock, nova_descricao, nova_categoria, novo_nome)
             else:
                 return Mensagem.ERRO_PERMISSAO
             
@@ -293,9 +286,9 @@ def Aplicar_Acao(bd, acao, parametros):
             
             return user.remover_produto(product_id)
 
-        case 'confirmar_pedido':
-            # Vendedor confirma um pedido pendente
-            if not isinstance(user, Vendedor):
+        case 'concluir_pedido':
+            # Vendedor ou Admin conclui um pedido
+            if not isinstance(user, Vendedor): # Admin herda de Vendedor
                 return Mensagem.PERMISSAO_NEGADA
             
             order_id = parametros.get('order_id')
@@ -311,25 +304,19 @@ def Aplicar_Acao(bd, acao, parametros):
             
             filtro_status = parametros.get('filtro_status')
             return user.listar_pedidos(filtro_status)
-
-        case 'concluir_pedido_admin':
-            # Admin conclui um pedido (deve estar confirmado)
-            if not isinstance(user, Admin):
-                return Mensagem.PERMISSAO_NEGADA
-            
-            order_id = parametros.get('order_id')
-            if not order_id:
-                return Mensagem.ERRO_PROCESSAMENTO
-            
-            return user.concluir_pedido(order_id)
         
+        case 'verificar_stock_baixo':
+            if not isinstance(user, Vendedor):
+                return Mensagem.PERMISSAO_NEGADA
+            return Vendedor.verificar_stock_baixo(bd)
+
         case _:
             return Mensagem.COMANDO_DESCONHECIDO
 
-def listar_produtos(user = None, id_loja = None):
+def listar_produtos(user = None, id_loja = None, filtros_extras = None):
     try:
         bd = DatabaseManager()
-        if not bd.connect() is None or bd.conn is None:
+        if not bd.connect() and bd.conn is None:
             print('Erro ao conectar BD')
             return []
         
@@ -337,12 +324,9 @@ def listar_produtos(user = None, id_loja = None):
             if isinstance(user, Vendedor):
                 id_loja = user.store_id
 
-        if id_loja is None:
-            produtos = Produto.listar_todos(bd)
-        else:
-            produtos = Produto.listar_todos(bd, f" WHERE p.store_id = {id_loja}")
-
-        bd.conn.close()
+        produtos = Produto.listar_todos(bd, store_id=id_loja, filtros_extras=filtros_extras)
+        if bd.conn is not None:
+            bd.conn.close()
         return produtos
     except Exception as e:
         print(f'Erro ao listar produtos: {str(e)}')
@@ -393,7 +377,7 @@ def ativar_atalho_servidor():
 
                     print('Atalho Ctrl+Alt+P detectado!')
                     limpar_base_dados_servidor()
-                    exit() # Finaliza o servidor após limpar a base de dados
+                    os._exit(0) # Finaliza o servidor após limpar a base de dados
             except:
                 pass
     except Exception as e:

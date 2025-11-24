@@ -1,919 +1,505 @@
 import json
 import socket
 import os
+import getpass
+import time
 
-class Colors:
-    HEADER = '\033[95m'
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    Default = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
+class Cores:
+    CABECALHO = '\033[95m'
+    AZUL = '\033[94m'
+    CIANO = '\033[96m'
+    VERDE = '\033[92m'
+    AMARELO = '\033[93m'
+    VERMELHO = '\033[91m'
+    NORMAL = '\033[0m'
+    NEGRITO = '\033[1m'
 
-def clear_screen():
-    os.system('cls')
-
-def send_command(comando_json, host='127.0.0.1', port=5000, timeout=5):
-    dados_formatados = json.dumps(comando_json) + '\n'
-
-    with socket.create_connection((host, port), timeout=timeout) as conexao_socket:
-        conexao_socket.sendall(dados_formatados.encode('utf-8'))
-        
-        buffer_resposta = b'' # b'' significa que é uma string de bytes
-        while True:
-            pedaco_recebido = conexao_socket.recv(4096)
-            if not pedaco_recebido:
-                break
-            buffer_resposta += pedaco_recebido
-            if b'\n' in pedaco_recebido: # Linha completa recebida
-                break
-        
-        linha_resposta = buffer_resposta.split(b'\n', 1)[0] # Pega até o primeiro \n
-        try:
-            return json.loads(linha_resposta.decode('utf-8'))
-        except Exception:
-            return {
-                'ok': False, 
-                'error': 'resposta_invalida', 
-            }
-
-def print_header(title: str):
-    print(f"{Colors.HEADER}{title}{Colors.Default}")
-
-def print_success(message: str):
-    print(f"{Colors.GREEN}Correto - {message}{Colors.Default}")
-
-def print_error(message: str):
-    print(f"{Colors.RED}Errado - {message}{Colors.Default}")
-
-def print_warning(message: str):
-    print(f"{Colors.YELLOW}Aviso - {message}{Colors.Default}")
-
-def print_info(message: str):
-    print(f"{Colors.CYAN}info - {message}{Colors.Default}")
-
-def print_menu_option(number: str, description: str):
-    print(f"  {number}) {description}")
-
-def input_prompt(prompt: str) -> str:
-    return input(f"{Colors.BLUE}{prompt}{Colors.Default}").strip()
-
-def input_prompt_seguro(prompt: str):
-    import getpass
-    return getpass.getpass(f"{Colors.BLUE}{prompt}{Colors.Default}").strip()
-
-class Session:
-    def __init__(self):
-        self.username = ''
-        self.password = ''
-        self.cargo = ''
-
-    def is_logged_in(self) -> bool:
-        return self.username == '' and self.password == ''
-
-    def get_status(self) -> str:
-        if self.is_logged_in():
-            return f"Conectado como: {Colors.BOLD}{self.username}{Colors.Default} ({self.cargo or 'Cliente'})"
-        return "Não conectado"
-
-    def logout(self):
-        self.username = None
-        self.password = None
-        self.cargo = None
-        print_success("Sessão encerrada")
-
-class MenuManager:
-    def __init__(self, host='127.0.0.1', port=5000):
+class ClienteRede:
+    def __init__(self, host='127.0.0.1', porta=5000):
         self.host = host
-        self.port = port
-        self.session = Session()
-        self.available_commands = {}  # Armazena comandos disponíveis
+        self.porta = porta
 
-    def verificar_conexao(self):
+    def enviar(self, acao, parametros=None):
+        if parametros is None:
+            parametros = {}
+        
+        dados_json = json.dumps({'acao': acao, 'parametros': parametros}) + '\n'
+        
         try:
-            res = send_command({'action': 'ping'}, host=self.host, port=self.port, timeout=3)
-            if res.get('ok'):
-                return True
-        except:
-            pass
-        return False
+            with socket.create_connection((self.host, self.porta), timeout=5) as conexao:
+                conexao.sendall(dados_json.encode('utf-8'))
+                
+                resposta_bytes = b''
+                while True:
+                    parte = conexao.recv(4096) # Recebe 4096 bytes por vez
+                    if not parte:
+                        break
+                    resposta_bytes += parte
+                    if b'\n' in parte:
+                        break
+                
+                resposta_str = resposta_bytes.decode('utf-8').strip()
+                if not resposta_str:
+                    return {'ok': False, 'erro': 'Resposta vazia do servidor'}
+                
+                return json.loads(resposta_str)
+        except ConnectionRefusedError:
+            return {'ok': False, 'erro': 'Não foi possível conectar ao servidor.'}
+        except Exception as e:
+            return {'ok': False, 'erro': f'Erro de comunicação: {str(e)}'}
 
-    def obter_comandos_disponiveis(self):
-        try:
-            # Se está logado, enviar credenciais para obter comandos autenticados
-            if self.session.is_logged_in():
-                resultado = send_command({
-                    'action': 'help',
-                    'params': {
-                        'username': self.session.username,
-                        'password': self.session.password
-                    }
-                }, host=self.host, port=self.port)
-            else:
-                # Se não está logado, obter comandos públicos
-                res = send_command({'action': 'help'}, host=self.host, port=self.port)
-            
-            if res.get('ok'):
-                self.available_commands = res.get('result', {}).get('categorias', {})
-                return True
-        except:
-            pass
-        return False
+class ClienteVendas:
+    def __init__(self):
+        self.rede = ClienteRede()
+        self.utilizador = None
+        self.cargo = None
+        self.comandos_disponiveis = {}
 
-    def pode_acessar_menu(self, categoria):
-        return categoria in self.available_commands
+    def limpar_tela(self):
+        os.system('cls')
 
-    def print_session_status(self):
-        print(f"\n{Colors.YELLOW}Estado: {self.session.get_status()}{Colors.Default}")
+    def imprimir_cabecalho(self, texto):
+        print(f"\n{Cores.CABECALHO}{Cores.NEGRITO} {texto} {Cores.NORMAL}")
 
-    def mostrar_menu(self, titulo, opcoes, texto_sair="Sair"):
-        clear_screen()
-        print_header(titulo)
-        self.print_session_status()
-            
-        for i, opcao in enumerate(opcoes):
-            print_menu_option(str(i + 1), opcao)
+    def imprimir_sucesso(self, texto):
+        print(f"{Cores.VERDE}Sucesso - {texto}{Cores.NORMAL}")
 
-        print_menu_option("0", texto_sair)
+    def imprimir_erro(self, texto):
+        print(f"{Cores.VERMELHO}Erro - {texto}{Cores.NORMAL}")
 
-        opcao = input_prompt("\nEscolha uma opção: ")
-        return opcao
+    def imprimir_info(self, texto):
+        print(f"{Cores.CIANO}Info - {texto}{Cores.NORMAL}")
 
-    def menu_principal(self):
-        # Verificar conexão ao iniciar
+    def imprimir_aviso(self, texto):
+        print(f"{Cores.AMARELO}Aviso - {texto}{Cores.NORMAL}")
+
+    def ler_texto(self, prompt):
+        return input(f"{Cores.AZUL}{prompt}{Cores.NORMAL} ").strip()
+
+    def ler_segredo(self, prompt):
+        return getpass.getpass(f"{Cores.AZUL}{prompt}{Cores.NORMAL} ").strip()
+
+    def pausar(self):
+        input(f"\n{Cores.NEGRITO}Pressione ENTER para continuar...{Cores.NORMAL}")
+
+    def executar_menu(self, titulo, opcoes, condicao_de_saida_lambda = None):
         while True:
-            clear_screen()
-            print_header("Sistema de Vendas")
-            print_info("A verificar conexão com o servidor...")
+            if condicao_de_saida_lambda is not None and condicao_de_saida_lambda() == True:
+                return
+
+            self.imprimir_cabecalho(titulo)
             
-            if self.verificar_conexao():
-                break
+            for indice, (descricao, _) in enumerate(opcoes, 1):
+                print(f"{indice}. {descricao}")
+            print("0. Voltar/Sair")
             
-            print_error("Erro: Tente novamente, o servidor não está a responder")
-            input("Pressione ENTER para tentar de novo...")
-        
-        print_success("Conectado ao servidor!")
-        print_info("A obter comandos disponíveis...")
-        
-        if not self.obter_comandos_disponiveis():
-            print_warning("Aviso: Não foi possível obter lista de comandos")
-        
-        print_info("Bem-vindo!")
-        input("Pressione ENTER...")
-        
-        while True:
-            # Montar menu dinâmico baseado em permissões
-            opcoes = []
-            opcao_map = {}
-            opcao_num = 1
-            
-            if self.pode_acessar_menu('autenticacao'):
-                opcoes.append("Autenticação")
-                opcao_map[str(opcao_num)] = 'autenticacao'
-                opcao_num += 1
-            
-            if self.pode_acessar_menu('compras'):
-                opcoes.append("Compras")
-                opcao_map[str(opcao_num)] = 'compras'
-                opcao_num += 1
-            
-            if self.pode_acessar_menu('administracao') or self.pode_acessar_menu('produtos'):
-                opcoes.append("Administração")
-                opcao_map[str(opcao_num)] = 'administracao'
-                opcao_num += 1
-            
-            if self.pode_acessar_menu('utilitarios'):
-                opcoes.append("Utilitários")
-                opcao_map[str(opcao_num)] = 'utilitarios'
-                opcao_num += 1
-            
-            opcao = self.mostrar_menu("Menu do Sistema de Vendas", opcoes, "Sair")
-            
-            menu_escolhido = opcao_map.get(opcao)
-            
-            if opcao == "0":
-                print_info("Encerrando aplicação...")
-                break
-            elif menu_escolhido == 'autenticacao':
-                self.menu_autenticacao()
-            elif menu_escolhido == 'compras':
-                if not self.session.is_logged_in():
-                    print_error("Deve fazer login primeiro!")
-                    input("Pressione ENTER...")
+            texto_opcao = self.ler_texto("Opção:")
+
+            if texto_opcao == '0':
+                return
+            try:
+                indice_selecionado = int(texto_opcao) - 1
+                if 0 <= indice_selecionado < len(opcoes):
+                    # Executa a ação associada à opção
+                    opcoes[indice_selecionado][1]()
                 else:
-                    self.menu_compras()
-            elif menu_escolhido == 'administracao':
-                self.menu_administracao()
-            elif menu_escolhido == 'utilitarios':
-                self.menu_utilitarios()
-            else:
-                print_error("Opção inválida!")
-                input("Pressione ENTER...")
-    
-    def menu_autenticacao(self):
-        """Menu de autenticação"""
+                    self.imprimir_erro("Opção inválida")
+                    input("Pressione qualquer tecla para continuar...")
+            except ValueError:
+                self.imprimir_erro("Opção inválida")
+                input("Pressione qualquer tecla para continuar...")
+
+    def iniciar(self):
         while True:
-            opcoes = []
-            opcao_map = {}
-            opcao_num = 1
+            self.limpar_tela()
+            self.imprimir_cabecalho("Sistema de Vendas")
+
+            ping = self.rede.enviar('ping')
+            if not ping.get('ok'):
+                self.imprimir_erro("Servidor indisponível.")
+                self.imprimir_info("Tentando reconectar em 5 segundos...")
+                time.sleep(5)
+                continue
+
+            self._atualizar_comandos()
             
-            if not self.session.is_logged_in():
-                # Mostrar apenas Login e Registar se NÃO estiver logado
-                opcoes.append("Fazer Login")
-                opcao_map[str(opcao_num)] = 'login'
-                opcao_num += 1
-                
-                opcoes.append("Registar Conta")
-                opcao_map[str(opcao_num)] = 'registar'
-                opcao_num += 1
+            if not self.utilizador:
+                self._menu_inicial()
             else:
-                # Mostrar opções do utilizador logado
-                # Alterar Senha (sempre disponível se logado)
-                opcoes.append("Alterar Senha")
-                opcao_map[str(opcao_num)] = 'alterar_senha'
-                opcao_num += 1
-                
-                # Mudar para Admin (se disponível no servidor)
-                if any('promover_para_admin' in self.available_commands.get(categoria, []) for categoria in self.available_commands):
-                    opcoes.append("Mudar para Admin")
-                    opcao_map[str(opcao_num)] = 'promover_para_admin'
-                    opcao_num += 1
-                
-                # Logout
-                opcoes.append("Logout")
-                opcao_map[str(opcao_num)] = 'logout'
-                opcao_num += 1
-            
-            opcao = self.mostrar_menu("Menu de Autenticação", opcoes, "Voltar ao Menu Principal")
-                        
-            if opcao == "0":
-                break
+                self._menu_principal()
 
-            match opcao_map.get(opcao):
-                case 'login':
-                    self.fazer_login()
-                case'registar':
-                    self.registar_cliente()
-                case 'alterar_senha':
-                    self.alterar_senha()
-                case 'promover_para_admin':
-                    self.promover_para_admin()
-                case 'logout':
-                    self.session.logout()
-                    # Atualizar comandos disponíveis após logout
-                    self.obter_comandos_disponiveis()
-                case _:
-                    print_error("Opção inválida!")
-                    input("Pressione ENTER...")
+    def _atualizar_comandos(self):
+        parametros = {}
+        if self.utilizador:
+            parametros = {'username': self.utilizador['username'], 'password': self.utilizador['password']}
+        
+        resposta = self.rede.enviar('help', parametros)
+        if resposta.get('ok'):
+            self.comandos_disponiveis = resposta.get('resultado', {}).get('categorias', {})
+            if 'cargo' in resposta.get('resultado', {}):
+                self.cargo = resposta['resultado']['cargo']
 
-    def menu_compras(self):
-        """Menu de compras"""
-        while True:
-            opcoes = []
-            opcao_map = {}
-            opcao_num = 1
-            
-            # Verificar o que o servidor realmente devolve no help
-            if any('list_products' in self.available_commands.get(categoria, []) for categoria in self.available_commands):
-                opcoes.append("Listar Produtos")
-                opcao_map[str(opcao_num)] = 'listar_produtos'
-                opcao_num += 1
-            
-            if any('realizar_venda' in self.available_commands.get(categoria, []) for categoria in self.available_commands):
-                opcoes.append("Comprar Produto")
-                opcao_map[str(opcao_num)] = 'comprar_produto'
-                opcao_num += 1
-            
-            if any('ver_meu_historico' in self.available_commands.get(categoria, []) for categoria in self.available_commands):
-                opcoes.append("Ver Meu Histórico")
-                opcao_map[str(opcao_num)] = 'ver_historico'
-                opcao_num += 1
-            
-            if not opcoes:
-                print_error("Sem permissões para acessar compras!")
-                input("Pressione ENTER...")
-                break
-            
-            opcao = self.mostrar_menu("Menu de Compras", opcoes, "Voltar ao Menu Principal")
-                        
-            if opcao == "0":
-                break
-            match opcao_map.get(opcao):
-                case 'listar_produtos':
-                    self.listar_produtos()
-                case 'comprar_produto':
-                    self.comprar_produto()
-                case 'ver_historico':
-                    self.ver_historico()
-                case _:
-                    print_error("Opção inválida!")
-                    input("Pressione ENTER...")
+    def _menu_inicial(self):
+        opcoes = [
+            ("Login", self._fazer_login),
+            ("Registar Cliente", self._registar_cliente)
+        ]
+        # Sai do menu se o usuário logar
+        self.executar_menu("Bem-vindo", opcoes, condicao_de_saida_lambda=lambda: self.utilizador is not None)
+        
+        # Se saiu do menu e não logou, encerra o app (usuário escolheu 0)
+        if not self.utilizador:
+            self.imprimir_info("A sair...")
+            exit(0)
 
-    def menu_administracao(self):
-        """Menu de administração"""
-        if not self.session.is_logged_in():
-            print_error("Deve fazer login primeiro!")
-            input("Pressione ENTER...")
+    def _menu_principal(self):
+        if not self.utilizador: 
             return
         
-        while True:
-            opcoes = []
-            opcao_map = {}
-            opcao_num = 1
+        opcoes = []
+        
+        if 'compras' in self.comandos_disponiveis:
+            opcoes.append(('Compras (Listar, Comprar, Histórico)', self._menu_compras))
             
-            # Verificar o que o servidor realmente devolve no help
-            # Procurar em todas as categorias por 'criar_funcionario'
-            if any('criar_funcionario' in self.available_commands.get(categoria, []) for categoria in self.available_commands):
-                opcoes.append("Criar Funcionário")
-                opcao_map[str(opcao_num)] = 'criar_funcionario'
-                opcao_num += 1
+        if 'pedidos' in self.comandos_disponiveis:
+            opcoes.append(('Gestão de Loja (Pedidos, Stock)', self._menu_loja))
             
-            # Procurar por 'add_product' (criar produto)
-            if any('add_product' in self.available_commands.get(categoria, []) for categoria in self.available_commands):
-                opcoes.append("Adicionar Produto")
-                opcao_map[str(opcao_num)] = 'add_product'
-                opcao_num += 1
+        if 'administracao' in self.comandos_disponiveis or 'produtos' in self.comandos_disponiveis:
+            opcoes.append(('Administração (Produtos, Funcionários)', self._menu_administracao))
             
-            # Procurar por 'editar_produto'
-            if any('editar_produto' in self.available_commands.get(categoria, []) for categoria in self.available_commands):
-                opcoes.append("Editar Produto")
-                opcao_map[str(opcao_num)] = 'editar_produto'
-                opcao_num += 1
-            
-            # Procurar por 'concluir_pedido'
-            if any('concluir_pedido' in self.available_commands.get(categoria, []) for categoria in self.available_commands):
-                opcoes.append("Concluir Pedido")
-                opcao_map[str(opcao_num)] = 'concluir_pedido'
-                opcao_num += 1
+        opcoes.append(('Minha Conta (Senha, Promoção, Logout)', self._menu_conta))
+        
+        # Sai do menu se o usuário deslogar
+        self.executar_menu(f"Menu Principal - {self.utilizador['username']} [{self.cargo}]", opcoes, condicao_de_saida_lambda=lambda: self.utilizador is None)
+        
+        # Se saiu do menu e ainda está logado, significa que escolheu 0 (Sair do App)
+        if self.utilizador:
+            self.imprimir_info("A sair...")
+            exit(0)
 
-            if not opcoes:
-                print_error("Sem permissões para acessar administração!")
-                input("Pressione ENTER...")
-                break
-            
-            opcao = self.mostrar_menu("Menu de Administração", opcoes, "Voltar ao Menu Principal")
-            
-            if opcao == "0":
-                break
-            match opcao_map.get(opcao):
-                case 'criar_funcionario':
-                    self.criar_funcionario()
-                case 'add_product':
-                    self.adicionar_produto()
-                case 'editar_produto':
-                    self.editar_produto()
-                case 'concluir_pedido':
-                    self.concluir_pedido()
-                case _:
-                    print_error("Opção inválida!")
-                    input("Pressione ENTER...")
+    def _menu_compras(self):
+        opcoes = [
+            ("Listar Produtos", self._listar_produtos),
+            ("Realizar Compra", self._realizar_compra),
+            ("Meu Histórico", self._ver_historico)
+        ]
+        self.executar_menu("Compras", opcoes)
 
-    def menu_utilitarios(self):
-        """Menu de utilitários"""
-        while True:
-            opcoes = []
-            opcao_map = {}
-            opcao_num = 1
+    def _menu_loja(self):
+        opcoes = [
+            ("Listar Pedidos da Loja", self._listar_pedidos_loja),
+            ("Concluir Pedido", self._concluir_pedido),
+            ("Verificar Stock Baixo", self._verificar_stock)
+        ]
+        self.executar_menu("Gestão de Loja", opcoes)
+
+    def _menu_administracao(self):
+        opcoes = []
+        todos_comandos = []
+        for categoria in ['administracao', 'produtos', 'autenticacao']:
+            if categoria in self.comandos_disponiveis:
+                todos_comandos.extend(self.comandos_disponiveis[categoria])
+        
+        if 'add_product' in todos_comandos:
+            opcoes.append(("Adicionar Produto", self._adicionar_produto))
+        if 'editar_produto' in todos_comandos:
+            opcoes.append(("Editar Produto", self._editar_produto))
+        if 'deletar_produto' in todos_comandos:
+            opcoes.append(("Remover Produto", self._remover_produto))
+        if 'criar_funcionario' in todos_comandos:
+            opcoes.append(("Criar Funcionário", self._criar_funcionario))
             
-            # Sempre mostrar teste de conexão (ping é sempre disponível)
-            if any('ping' in self.available_commands.get(cat, []) for cat in self.available_commands):
-                opcoes.append("Teste de Conexão (Ping)")
-                opcao_map[str(opcao_num)] = 'ping'
-                opcao_num += 1
+        self.executar_menu("Administração", opcoes)
+
+    def _menu_conta(self):
+        opcoes = [ ("Alterar Senha", self._alterar_senha) ]
+        
+        if 'promover_para_admin' in self.comandos_disponiveis.get('autenticacao', []):
+            opcoes.append(("Promover a Admin", self._promover_admin))
             
-            # Adicionar opção para limpar tela
-            opcoes.append("Limpar Tela")
-            opcao_map[str(opcao_num)] = 'limpar_tela'
-            opcao_num += 1
+        opcoes.append(("Logout", self._fazer_logout))
+        
+        # Sai do menu se deslogar
+        self.executar_menu("Minha Conta", opcoes, condicao_de_saida_lambda=lambda: self.utilizador is None)
+
+
+    def _fazer_login(self):
+        self.imprimir_cabecalho("Login")
+        utilizador = self.ler_texto("Username:")
+        senha = self.ler_segredo("Password:")
+        
+        resposta = self.rede.enviar('autenticar', {'username': utilizador, 'password': senha})
+        if resposta.get('ok'):
+            self.utilizador = {'username': utilizador, 'password': senha}
+            self.cargo = resposta['resultado'].get('cargo')
+            self.imprimir_sucesso(f"Bem-vindo, {utilizador} ({self.cargo})")
+            time.sleep(1)
+        else:
+            self.imprimir_erro(resposta.get('erro', 'Erro no login'))
+            self.pausar()
+
+    def _registar_cliente(self):
+        self.imprimir_cabecalho("Registo")
+        utilizador = self.ler_texto("Username:")
+        senha = self.ler_segredo("Password:")
+        confirmacao = self.ler_segredo("Confirmar Password:")
+        
+        if senha != confirmacao:
+            self.imprimir_erro("As passwords não coincidem.")
+            self.pausar()
+            return
+
+        resposta = self.rede.enviar('registar_cliente', {'username': utilizador, 'password': senha})
+        if resposta.get('ok'):
+            self.imprimir_sucesso("Conta criada com sucesso! Faça login para continuar.")
+        else:
+            self.imprimir_erro(resposta.get('erro', 'Erro ao criar conta'))
+        self.pausar()
+
+    def _fazer_logout(self):
+        self.utilizador = None
+        self.cargo = None
+        self.imprimir_sucesso("Logout efetuado.")
+        time.sleep(1)
+
+    def _listar_produtos(self):
+        if not self.utilizador: return
+        self.imprimir_cabecalho("Filtros (Enter para ignorar)")
+        categoria = self.ler_texto("Categoria:")
+        preco_maximo = self.ler_texto("Preço Máximo:")
+        
+        parametros = {}
+        if categoria: parametros['categoria'] = categoria
+        if preco_maximo: 
+            try: parametros['preco_max'] = float(preco_maximo)
+            except: pass
             
-            opcao = self.mostrar_menu("Menu de Utilitários", opcoes, "Voltar ao Menu Principal")
-            
-            acao = opcao_map.get(opcao)
-            
-            if opcao == "0":
-                break
-            elif acao == 'ping':
-                self.fazer_ping()
-            elif acao == 'limpar_tela':
-                clear_screen()
-                continue
+        resposta = self.rede.enviar('list_products', {**self.utilizador, **parametros})
+        if resposta.get('ok'):
+            produtos = resposta.get('resultado', [])
+            if not produtos:
+                self.imprimir_aviso("Nenhum produto encontrado.")
             else:
-                print_error("Opção inválida!")
-                input("Pressione ENTER...")
+                print(f"\n{Cores.NEGRITO}{'ID':<5} {'Nome':<20} {'Categoria':<15} {'Preço':<10} {'Stock':<8} {'Loja':<15}{Cores.NORMAL}")
+                print("-" * 80)
+                for produto in produtos:
+                    print(f"{produto['id']:<5} {produto['nome']:<20} {produto['categoria']:<15} {produto['preco']:<10.2f} {produto['stock']:<8} {produto['loja']:<15}")
+        else:
+            self.imprimir_erro(resposta.get('erro'))
+        self.pausar()
 
-
-    # Funções de Autenticação 
-    def fazer_login(self):
-        """Login do utilizador"""
-        clear_screen()
-        print_header("Login:")
+    def _realizar_compra(self):
+        if not self.utilizador: 
+            return
+        
+        produto_id = self.ler_texto("ID do Produto:")
+        quantidade = self.ler_texto("Quantidade:")
         
         try:
-            username = input_prompt("Username: ")
-            password = input_prompt_seguro("Password: ")
+            itens = {produto_id: int(quantidade)}
+            resposta = self.rede.enviar('realizar_venda', {**self.utilizador, 'itens': itens})
             
-            if not username or not password:
-                print_error("Username e password são obrigatórios!")
-                input("Pressione ENTER...")
-                return
-            
-            print_info("A processar...")
-            
-            res = send_command({
-                'action': 'autenticar',
-                'params': {'username': username, 'password': password}
-            }, host=self.host, port=self.port)
-            
-            if res.get('ok'):
-                self.session.username = username
-                self.session.password = password
-                self.session.cargo = res.get('result', {}).get('cargo', 'cliente')
-                print_success(f"Login realizado com sucesso como: {username}")
-                print_info(f"Cargo: {self.session.cargo}")
-                
-                # Atualizar comandos disponíveis após login
-                print_info("A obter novos comandos disponíveis...")
-                self.obter_comandos_disponiveis()
-            else:
-                print_error(f"Login inválido!")
-        except Exception as e:
-            print_error(f"Erro ao fazer login: {str(e)}")
-        
-        input("Pressione ENTER...")
-
-    def registar_cliente(self):
-        clear_screen()
-        print_header("Registar Conta")
-        
-        try:
-            username = input_prompt("Username: ")
-            password = input_prompt_seguro("Password: ")
-            password_conf = input_prompt_seguro("Confirmar Password: ")
-            
-            if not username or not password or not password_conf:
-                print_error("Todos os campos são obrigatórios!")
-                input("Pressione ENTER...")
-                return
-            
-            if password != password_conf:
-                print_error("As passwords não correspondem!")
-                input("Pressione ENTER...")
-                return
-            
-            print_info("A registar conta...")
-            
-            res = send_command({
-                'action': 'registar_cliente',
-                'params': {'username': username, 'password': password}
-            }, host=self.host, port=self.port)
-            
-            if res.get('ok'):
-                print_success(f"Conta criada com sucesso! Username: {username}")
-                print_info("Pode agora fazer login com estas credenciais")
-            else:
-                print_error(f"Erro ao registar: {res.get('error', 'Desconhecido')}")
-        except Exception as e:
-            print_error(f"Erro ao registar: {str(e)}")
-        
-        input("Pressione ENTER...")
-
-    def alterar_senha(self):
-        clear_screen()
-        print_header("Alterar Senha")
-        
-        try:
-            senha_atual = input_prompt_seguro("Senha atual: ")
-            senha_nova = input_prompt_seguro("Nova senha: ")
-            senha_conf = input_prompt_seguro("Confirmar nova senha: ")
-            
-            if not senha_atual or not senha_nova or not senha_conf:
-                print_error("Todos os campos são obrigatórios!")
-                input("Pressione ENTER...")
-                return
-            
-            if senha_nova != senha_conf:
-                print_error("As novas senhas não correspondem!")
-                input("Pressione ENTER...")
-                return
-            
-            # Validar senha atual
-            if senha_atual != self.session.password:
-                print_error("Senha atual incorreta!")
-                input("Pressione ENTER...")
-                return
-            
-            print_info("A alterar senha...")
-            
-            res = send_command({
-                'action': 'editar_senha',
-                'params': {
-                    'username': self.session.username,
-                    'password': self.session.password,
-                    'nova_senha': senha_nova
-                }
-            }, host=self.host, port=self.port)
-            
-            if res.get('ok'):
-                # Atualizar a senha na sessão
-                self.session.password = senha_nova
-                print_success("Senha alterada com sucesso!")
-            else:
-                print_error(f"Erro ao alterar senha: {res.get('error', 'Desconhecido')}")
-        except Exception as e:
-            print_error(f"Erro ao alterar senha: {str(e)}")
-        
-        input("Pressione ENTER...")
-
-    def promover_para_admin(self):
-        clear_screen()
-        print_header("Mudar para Admin")
-        
-        try:
-            if not self.session.is_logged_in():
-                print_error("Deve fazer login primeiro!")
-                input("Pressione ENTER...")
-                return
-            
-            chave = input_prompt_seguro("Código de promoção: ")
-            
-            if not chave:
-                print_error("Código de promoção é obrigatório!")
-                return
-            
-            print_info("A processar promoção...")
-            
-            res = send_command({
-                'action': 'promover_para_admin',
-                'params': {
-                    'username': self.session.username,
-                    'password': self.session.password,
-                    'chave': chave
-                }
-            }, host=self.host, port=self.port)
-            
-            if res.get('ok'):
-                self.session.cargo = 'admin'
-                print_success(f"Parabéns! Promovido para admin com sucesso!")
-                print_info("Os seus novos privilégios estão agora ativos")
-                
-                # Atualizar comandos disponíveis após promoção
-                print_info("A obter novos comandos disponíveis...")
-                self.obter_comandos_disponiveis()
-            else:
-                print_error(f"Erro: {res.get('error', 'Desconhecido')}")
-        except Exception as e:
-            print_error(f"Erro ao promover para admin: {str(e)}")
-        
-        input("Pressione ENTER...")
-
-    # Funções de Compras
-    def listar_produtos(self):
-        clear_screen()
-        print_header("LISTA DE PRODUTOS")
-        
-        try:
-            resultado = send_command({'action': 'list_products'}, host=self.host, port=self.port)
-            if resultado.get('ok'):
-                products = resultado.get('result', [])
-                if products:
-                    for product in products:
-                        self._print_product(product)
+            if resposta.get('ok'):
+                resultado = resposta.get('resultado')
+                if isinstance(resultado, list):
+                    status, dados = resultado
+                    self.imprimir_sucesso(f"Pedido realizado! Status: {status}")
+                    self.imprimir_info(f"Total: {dados.get('total_price')}€ | ID Pedido: {dados.get('order_id')}")
                 else:
-                    print_info("Nenhum produto disponível")
+                    self.imprimir_sucesso(f"Pedido realizado: {resultado}")
             else:
-                print_error(f"Erro: {resultado.get('error', 'Desconhecido')}")
-        except Exception as e:
-            print_error(f"Erro ao listar produtos: {str(e)}")
+                self.imprimir_erro(resposta.get('erro'))
+        except ValueError:
+            self.imprimir_erro("Quantidade inválida.")
+        self.pausar()
+
+    def _ver_historico(self):
+        resposta = self.rede.enviar('ver_meu_historico', self.utilizador)
+        if resposta.get('ok'):
+            historico = resposta.get('resultado', [])
+            if not historico:
+                self.imprimir_info("Histórico vazio.")
+            else:
+                for h in historico:
+                    print(f"Data: {h['order_date']} | Produto: {h['produto']} | Qtd: {h['quantity']} | Total: {h['quantity']*h['unit_price']:.2f}€ | Status: {h['status']}")
+        else:
+            self.imprimir_erro(resposta.get('erro'))
+        self.pausar()
+
+    def _listar_pedidos_loja(self):
+        if not self.utilizador: 
+            return
+        self.imprimir_cabecalho("Pedidos da Loja")
+        filtro = self.ler_texto("Filtrar Status (pendente/concluida/vazio):")
+        parametros = {**self.utilizador}
+        if filtro: parametros['filtro_status'] = filtro
         
-        input("Pressione ENTER...")
+        resposta = self.rede.enviar('listar_pedidos', parametros)
+        if resposta.get('ok'):
+            pedidos = resposta.get('resultado', [])
+            for produto in pedidos:
+                print(f"ID: {produto['id']} | Data: {produto['order_date']} | Cliente: {produto['cliente']} | Total: {produto['total_price']:.2f}€ | Status: {produto['status']}")
+        else:
+            self.imprimir_erro(resposta.get('erro'))
+        self.pausar()
 
-    def _print_product(self, product):
-        print(f"\n{Colors.BOLD}ID: {Colors.Default}{product['id']}")
-        print(f"{Colors.BOLD}Nome:{Colors.Default} {product['nome']}")
-        print(f"{Colors.BOLD}Categoria:{Colors.Default} {product['categoria']}")
-        print(f"{Colors.BOLD}Descrição:{Colors.Default} {product['descricao']}")
-        print(f"{Colors.BOLD}Preço:{Colors.Default} €{product['preco']:.2f}")
-        print(f"{Colors.BOLD}Stock:{Colors.Default} {product['stock']}")
-        print(f"{Colors.BOLD}Loja:{Colors.Default} {product['loja']}")
-        print("\n")
+    def _concluir_pedido(self):
+        if not self.utilizador: 
+            return
+        pedido_id = self.ler_texto("ID do Pedido a concluir:")
+        resposta = self.rede.enviar('concluir_pedido', {**self.utilizador, 'order_id': pedido_id})
+        if resposta.get('ok'):
+            self.imprimir_sucesso("Pedido concluído com sucesso!")
+        else:
+            self.imprimir_erro(resposta.get('erro'))
+        self.pausar()
 
-    def comprar_produto(self):
-        clear_screen()
-        print_header("Produtos")
+    def _verificar_stock(self):
+        if not self.utilizador: 
+            return
+        resposta = self.rede.enviar('verificar_stock_baixo', self.utilizador)
+        if resposta.get('ok'):
+            resultado = resposta.get('resultado')
+            if isinstance(resultado, list) and len(resultado) == 2:
+                mensagem, produtos = resultado
+                self.imprimir_aviso(f"ALERTA: {mensagem}")
+                for produto in produtos:
+                    print(f" - Produto: {produto['nome']} (ID: {produto['id']}) | Stock: {produto['stock']} | Loja: {produto['loja']}")
+            elif resultado == "SUCESSO":
+                self.imprimir_sucesso("Stock está normal (nenhum produto abaixo de 5 unidades).")
+            else:
+                self.imprimir_info(f"Resultado: {resultado}")
+        else:
+            self.imprimir_erro(resposta.get('erro'))
+        self.pausar()
+
+    def _adicionar_produto(self):
+        if not self.utilizador: return
+        self.imprimir_cabecalho("Novo Pedido")
+        nome = self.ler_texto("Nome:")
+        categoria = self.ler_texto("Categoria:")
+        descricao = self.ler_texto("Descrição:")
+        preco = self.ler_texto("Preço:")
+        stock = self.ler_texto("Stock:")
+        loja_id = self.ler_texto("ID Loja:")
         
         try:
-            self.listar_produtos()
-
-            print_header("Comprar Produto")
-
-            try:
-                pid = int(input_prompt("ID do produto: "))
-                qty = int(input_prompt("Quantidade: "))
-            except ValueError:
-                print_error("ID e quantidade devem ser números!")
-                return
-            
-            cmd = {
-                'action': 'realizar_venda',
-                'params': {
-                    'username': self.session.username,
-                    'password': self.session.password,
-                    'itens': {str(pid): qty}
-                }
+            parametros = {
+                **self.utilizador,
+                'nome': nome, 'categoria': categoria, 'descricao': descricao,
+                'preco': float(preco), 'stock': int(stock), 'store_id': int(loja_id)
             }
-            resultado = send_command(cmd, host=self.host, port=self.port)
-
-            if resultado.get('ok'):
-                res = resultado.get('result')
-                # Tratar caso especial: lista com [status_name, dados]
-                if isinstance(res, list) and len(res) == 2:
-                    status_name, dados = res
-                    print_success(f"Compra realizada com sucesso!")
-                    print_info(f"ID do Pedido: {Colors.BOLD}{dados.get('order_id')}{Colors.Default}")
-                    print_info(f"Valor Total: €{dados.get('total_price'):.2f}")
-                    print_warning(f"Status: {status_name} - Aguardando confirmação do vendedor")
-                else:
-                    print_success(f"Compra realizada com sucesso! Status: {res}")
+            resposta = self.rede.enviar('add_product', parametros)
+            if resposta.get('ok'):
+                self.imprimir_sucesso("Produto adicionado!")
             else:
-                print_error(f"Erro: {resultado.get('error', 'Desconhecido')}")
-        except Exception as e:
-            print_error(f"Erro ao comprar produto: {str(e)}")
-        
-        input("Pressione ENTER...")
+                self.imprimir_erro(resposta.get('erro'))
+        except ValueError:
+            self.imprimir_erro("Valores numéricos inválidos.")
+        self.pausar()
 
-    def ver_historico(self):
-        """Ver histórico de compras"""
-        clear_screen()
-        print_header("Histórico de Compras")
+    def _editar_produto(self):
+        if not self.utilizador: 
+            return
+        produto_id = self.ler_texto("ID Produto:")
+        self.imprimir_info("Deixe em branco para não alterar")
         
-        try:
-            cmd = {
-                'action': 'ver_meu_historico',
-                'params': {
-                    'username': self.session.username,
-                    'password': self.session.password
-                }
-            }
-            resultado = send_command(cmd, host=self.host, port=self.port)
+        novo_nome = self.ler_texto("Novo Nome:")
+        nova_categoria = self.ler_texto("Nova Categoria:")
+        novo_preco = self.ler_texto("Novo Preço:")
+        novo_stock = self.ler_texto("Novo Stock:")
+        nova_descricao = self.ler_texto("Nova Descrição:")
+        
+        parametros = {**self.utilizador, 'product_id': produto_id}
+        if novo_nome: parametros['novo_nome'] = novo_nome
+        if nova_categoria: parametros['nova_categoria'] = nova_categoria
+        if novo_preco: parametros['novo_preco'] = novo_preco
+        if novo_stock: parametros['novo_stock'] = novo_stock
+        if nova_descricao: parametros['nova_descricao'] = nova_descricao
+        
+        if self.cargo == 'admin':
+            novo_id_da_loja = self.ler_texto("Novo ID Loja:")
+            if novo_id_da_loja: parametros['novo_id_da_loja'] = novo_id_da_loja
+        
+        resposta = self.rede.enviar('editar_produto', parametros)
+        if resposta.get('ok'):
+            self.imprimir_sucesso("Produto atualizado!")
+        else:
+            self.imprimir_erro(resposta.get('erro'))
+        self.pausar()
 
-            if resultado.get('ok'):
-                historico = resultado.get('result', [])
-                if historico:
-                    for idx, item in enumerate(historico, 1):
-                        self._print_order(idx, item)
-                else:
-                    print_info("Nenhuma compra registada")
-            else:
-                print_error(f"Erro: {resultado.get('error', 'Desconhecido')}")
-        except Exception as e:
-            print_error(f"Erro ao obter histórico: {str(e)}")
+    def _remover_produto(self):
+        if not self.utilizador: return
+        produto_id = self.ler_texto("ID Produto a remover:")
+        confirmacao = self.ler_texto("Tem a certeza? (s/n):")
+        if confirmacao.lower() != 's': return
         
-        input("Pressione ENTER...")
+        resposta = self.rede.enviar('deletar_produto', {**self.utilizador, 'product_id': produto_id})
+        if resposta.get('ok'):
+            self.imprimir_sucesso("Produto removido!")
+        else:
+            self.imprimir_erro(resposta.get('erro'))
+        self.pausar()
 
-    def _print_order(self, idx, order):
-        """Formata e imprime uma encomenda"""
-        print(f"\n{Colors.BOLD}Encomenda #{idx}{Colors.Default}")
-        print(f"  Data: {order.get('order_date', 'N/A')}")
-        print(f"  Produto: {order.get('produto', 'N/A')} (ID: {order.get('product_id')})")
-        print(f"  Quantidade: {order.get('quantity')}")
-        print(f"  Preço unitário: €{order.get('unit_price', 0):.2f}")
-        print(f"  Total: €{order.get('quantity', 0) * order.get('unit_price', 0):.2f}")
-        print(f"  Loja: {order.get('loja', 'N/A')}")
-        print(f"  Status: {Colors.YELLOW}{order.get('status', 'N/A').upper()}{Colors.Default}")
-        print("\n")
+    def _criar_funcionario(self):
+        if not self.utilizador: 
+            return
+        self.imprimir_cabecalho("Criar Funcionario")
+        utilizador = self.ler_texto("Username:")
+        senha = self.ler_segredo("Password:")
+        tipo = self.ler_texto("Tipo (admin/vendedor):")
+        loja_id = ""
+        if tipo == 'vendedor':
+            loja_id = self.ler_texto("ID Loja:")
+            
+        parametros = {
+            **self.utilizador,
+            'username_func': utilizador, 'password_func': senha,
+            'tipo': tipo, 'loja_id': loja_id
+        }
+        
+        resposta = self.rede.enviar('criar_funcionario', parametros)
+        if resposta.get('ok'):
+            self.imprimir_sucesso("Funcionário criado!")
+        else:
+            self.imprimir_erro(resposta.get('erro'))
+        self.pausar()
 
-    # Funções de Administração
-    def criar_funcionario(self):
-        """Cria um novo funcionário (vendedor ou admin)"""
-        clear_screen()
-        print_header("Criar Funcionário")
-        
-        try:
-            if not self.session.is_logged_in():
-                print_error("Deve fazer login como admin primeiro!")
-                input("Pressione ENTER...")
-                return
+    def _alterar_senha(self):
+        if not self.utilizador: 
+            return
+        nova_senha = self.ler_segredo("Nova Senha:")
+        confirmacao = self.ler_segredo("Confirmar:")
+        if nova_senha != confirmacao:
+            self.imprimir_erro("Não coincidem.")
+            self.pausar()
+            return
             
-            username = input_prompt("Username: ")
-            password = input_prompt_seguro("Password: ")
-            
-            # Pergunta o tipo de funcionário
-            print_menu_option("1", "Vendedor (com loja)")
-            print_menu_option("2", "Admin")
-            tipo_choice = input_prompt("Escolha o tipo: ")
-            
-            loja_id = None
-            if tipo_choice == "1":
-                tipo = "vendedor"
-                try:
-                    loja_id = int(input_prompt("ID da loja: "))
-                except ValueError:
-                    print_error("ID da loja deve ser um número!")
-                    return
-            elif tipo_choice == "2":
-                tipo = "admin"
-            else:
-                print_error("Opção inválida!")
-                return
-            
-            if not username or not password:
-                print_error("Username e password são obrigatórios!")
-                return
-            
-            params = {
-                'username': self.session.username,
-                'password': self.session.password,
-                'username_func': username,
-                'password_func': password,
-                'tipo': tipo
-            }
-            
-            if tipo == 'vendedor':
-                params['loja_id'] = loja_id
-            
-            res = send_command({
-                'action': 'criar_funcionario',
-                'params': params
-            }, host=self.host, port=self.port)
-            
-            if res.get('ok'):
-                resultado = res.get('result', {})
-                print_success(f"Funcionário criado com sucesso!")
-                print_info(f"Username: {resultado.get('created')}")
-                print_info(f"Tipo: {resultado.get('cargo')}")
-                if resultado.get('loja'):
-                    print_info(f"Loja: {resultado.get('loja')}")
-            else:
-                print_error(f"Erro: {res.get('error', 'Desconhecido')}")
-        except Exception as e:
-            print_error(f"Erro ao criar funcionário: {str(e)}")
-        
-        input("Pressione ENTER...")
+        resposta = self.rede.enviar('editar_senha', {**self.utilizador, 'nova_senha': nova_senha})
+        if resposta.get('ok'):
+            self.imprimir_sucesso("Senha alterada!")
+            self.utilizador['password'] = nova_senha
+        else:
+            self.imprimir_erro(resposta.get('erro'))
+        self.pausar()
 
-    def concluir_pedido(self):
-        """Conclui um pedido"""
-        clear_screen()
-        print_header("CONCLUIR PEDIDO")
-        
-        try:
-            if not self.session.is_logged_in():
-                print_error("Deve fazer login primeiro!")
-                input("Pressione ENTER...")
-                return
-            
-            try:
-                oid = int(input_prompt("Order ID a concluir: "))
-            except ValueError:
-                print_error("ID deve ser um número!")
-                return
-            
-            cmd = {
-                'action': 'concluir_pedido',
-                'params': {
-                    'username': self.session.username,
-                    'password': self.session.password,
-                    'order_id': oid
-                }
-            }
-            res = send_command(cmd, host=self.host, port=self.port)
-            
-            if res.get('ok'):
-                print_success(f"Pedido concluído! Status: {res.get('result')}")
-            else:
-                print_error(f"Erro: {res.get('error', 'Desconhecido')}")
-        except Exception as e:
-            print_error(f"Erro ao concluir pedido: {str(e)}")
-        
-        input("Pressione ENTER...")
-
-    def editar_produto(self):
-        """Edita um produto (Admin/Vendedor)"""
-        clear_screen()
-        print_header("EDITAR PRODUTO")
-        
-        try:
-            if not self.session.is_logged_in():
-                print_error("Deve fazer login primeiro!")
-                input("Pressione ENTER...")
-                return
-            
-            # Listar produtos primeiro
-            self.listar_produtos()
-            
-            clear_screen()
-            print_header("EDITAR PRODUTO")
-            
-            try:
-                pid = int(input_prompt("ID do produto a editar: "))
-            except ValueError:
-                print_error("ID deve ser um número!")
-                return
-            
-            # Solicitar dados a editar (opcional)
-            novo_preco_str = input_prompt("Novo preço (deixar em branco para manter): ")
-            novo_stock_str = input_prompt("Novo stock (deixar em branco para manter): ")
-            nova_descricao = input_prompt("Nova descrição (deixar em branco para manter): ")
-            
-            cmd = {
-                'action': 'editar_produto',
-                'params': {
-                    'username': self.session.username,
-                    'password': self.session.password,
-                    'product_id': pid,
-                    'novo_preco': float(novo_preco_str) if novo_preco_str else None,
-                    'novo_stock': int(novo_stock_str) if novo_stock_str else None,
-                    'nova_descricao': nova_descricao if nova_descricao else None
-                }
-            }
-            res = send_command(cmd, host=self.host, port=self.port)
-            
-            if res.get('ok'):
-                print_success(f"Produto editado com sucesso! Status: {res.get('result')}")
-            else:
-                print_error(f"Erro: {res.get('error', 'Desconhecido')}")
-        except Exception as e:
-            print_error(f"Erro ao editar produto: {str(e)}")
-        
-        input("Pressione ENTER...")
-
-    def adicionar_produto(self):
-        """Adiciona um novo produto (Admin only)"""
-        clear_screen()
-        print_header("ADICIONAR PRODUTO")
-        
-        try:
-            if not self.session.is_logged_in():
-                print_error("Deve fazer login primeiro!")
-                input("Pressione ENTER...")
-                return
-            
-            nome = input_prompt("Nome do produto: ")
-            categoria = input_prompt("Categoria: ")
-            descricao = input_prompt("Descrição: ")
-            
-            try:
-                preco = float(input_prompt("Preço: "))
-                stock = int(input_prompt("Stock: "))
-                store_id = int(input_prompt("ID da loja: "))
-            except ValueError:
-                print_error("Preço deve ser número, stock e loja devem ser inteiros!")
-                return
-            
-            if not nome or not categoria or not descricao:
-                print_error("Todos os campos são obrigatórios!")
-                return
-            
-            cmd = {
-                'action': 'add_product',
-                'params': {
-                    'username': self.session.username,
-                    'password': self.session.password,
-                    'nome': nome,
-                    'categoria': categoria,
-                    'descricao': descricao,
-                    'preco': preco,
-                    'stock': stock,
-                    'store_id': store_id
-                }
-            }
-            res = send_command(cmd, host=self.host, port=self.port)
-            
-            if res.get('ok'):
-                print_success(f"Produto adicionado com sucesso! Status: {res.get('result')}")
-            else:
-                print_error(f"Erro: {res.get('error', 'Desconhecido')}")
-        except Exception as e:
-            print_error(f"Erro ao adicionar produto: {str(e)}")
-        
-        input("Pressione ENTER...")
-
-    def fazer_ping(self):
-        clear_screen()
-        
-        try:
-            print_info("A testar conexão...")
-            resultado = send_command({'action': 'ping'}, host=self.host, port=self.port)
-            if resultado.get('ok'):
-                print_success(f"Servidor respondeu: {resultado.get('result')}")
-            else:
-                print_error(f"Erro: {resultado.get('error', 'Desconhecido')}")
-        except Exception as e:
-            print_error(f"Erro de conexão: {str(e)}")
-        
-        input("Pressione ENTER...")
-
-def interactive_menu(host='127.0.0.1', port=5000):
-    manager = MenuManager(host=host, port=port)
-    manager.menu_principal()
+    def _promover_admin(self):
+        if not self.utilizador: 
+            return
+        chave = self.ler_segredo("Chave de Admin:")
+        resposta = self.rede.enviar('promover_para_admin', {**self.utilizador, 'chave': chave})
+        if resposta.get('ok'):
+            self.imprimir_sucesso("Promovido a Admin! Faça login novamente para atualizar permissões.")
+            self.utilizador = None # Forçar logout
+        else:
+            self.imprimir_erro(resposta.get('erro'))
+        self.pausar()
 
 if __name__ == '__main__':
     try:
-        interactive_menu()
+        app = ClienteVendas()
+        app.iniciar()
     except KeyboardInterrupt:
-        print('\n' * 100)
-        print(f'A fechar o Cliente.')
+        print("\nEncerrando...")
     except Exception as e:
-        print(f"\n{Colors.RED}Erro fatal: {str(e)}{Colors.Default}")
+        print(f"Erro fatal: {e}")
