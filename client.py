@@ -5,7 +5,7 @@ import getpass
 import time
 
 class Cores:
-    CABECALHO = '\033[95m'
+    ROXO = '\033[95m'
     AZUL = '\033[94m'
     CIANO = '\033[96m'
     VERDE = '\033[92m'
@@ -59,7 +59,7 @@ class ClienteVendas:
         os.system('cls')
 
     def imprimir_cabecalho(self, texto):
-        print(f"\n{Cores.CABECALHO}{Cores.NEGRITO} {texto} {Cores.NORMAL}")
+        print(f"\n{Cores.ROXO}{Cores.NEGRITO} {texto} {Cores.NORMAL}")
 
     def imprimir_sucesso(self, texto):
         print(f"{Cores.VERDE}Sucesso - {texto}{Cores.NORMAL}")
@@ -85,7 +85,7 @@ class ClienteVendas:
     def executar_menu(self, titulo, opcoes, condicao_de_saida_lambda = None):
         while True:
             if condicao_de_saida_lambda is not None and condicao_de_saida_lambda() == True:
-                return
+                return # Se houver uma condição especial e ela for comprida retorna
 
             self.imprimir_cabecalho(titulo)
             
@@ -104,10 +104,9 @@ class ClienteVendas:
                     opcoes[indice_selecionado][1]()
                 else:
                     self.imprimir_erro("Opção inválida")
-                    input("Pressione qualquer tecla para continuar...")
             except ValueError:
                 self.imprimir_erro("Opção inválida")
-                input("Pressione qualquer tecla para continuar...")
+                self.pausar()
 
     def iniciar(self):
         while True:
@@ -119,7 +118,7 @@ class ClienteVendas:
                 self.imprimir_erro("Servidor indisponível.")
                 self.imprimir_info("Tentando reconectar em 5 segundos...")
                 time.sleep(5)
-                continue
+                continue # vai passar para o próximo loop, onde tenta reconectar novamente
 
             self._atualizar_comandos()
             
@@ -144,10 +143,10 @@ class ClienteVendas:
             ("Login", self._fazer_login),
             ("Registar Cliente", self._registar_cliente)
         ]
-        # Sai do menu se o usuário logar
+        # Sai do menu se o utilizador iniciar sessão 
         self.executar_menu("Bem-vindo", opcoes, condicao_de_saida_lambda=lambda: self.utilizador is not None)
         
-        # Se saiu do menu e não logou, encerra o app (usuário escolheu 0)
+        # Se saiu do menu e não logou, encerra o app (quando o utilizador escolhe 0 sem iniciar sessão)
         if not self.utilizador:
             self.imprimir_info("A sair...")
             exit(0)
@@ -233,7 +232,6 @@ class ClienteVendas:
             self.utilizador = {'username': utilizador, 'password': senha}
             self.cargo = resposta['resultado'].get('cargo')
             self.imprimir_sucesso(f"Bem-vindo, {utilizador} ({self.cargo})")
-            time.sleep(1)
         else:
             self.imprimir_erro(resposta.get('erro', 'Erro no login'))
             self.pausar()
@@ -260,7 +258,6 @@ class ClienteVendas:
         self.utilizador = None
         self.cargo = None
         self.imprimir_sucesso("Logout efetuado.")
-        time.sleep(1)
 
     def _listar_produtos(self):
         if not self.utilizador: return
@@ -281,9 +278,9 @@ class ClienteVendas:
                 self.imprimir_aviso("Nenhum produto encontrado.")
             else:
                 print(f"\n{Cores.NEGRITO}{'ID':<5} {'Nome':<20} {'Categoria':<15} {'Preço':<10} {'Stock':<8} {'Loja':<15}{Cores.NORMAL}")
-                print("-" * 80)
+                print("\n")
                 for produto in produtos:
-                    print(f"{produto['id']:<5} {produto['nome']:<20} {produto['categoria']:<15} {produto['preco']:<10.2f} {produto['stock']:<8} {produto['loja']:<15}")
+                    print(f"{produto['id']:<5} {produto['nome']:<20} {produto['categoria']:<15} {produto['preco']:<10.2f} {produto['stock']:<8} {produto['loja']:<15}/n")
         else:
             self.imprimir_erro(resposta.get('erro'))
         self.pausar()
@@ -304,9 +301,9 @@ class ClienteVendas:
                 if isinstance(resultado, list):
                     status, dados = resultado
                     self.imprimir_sucesso(f"Pedido realizado! Status: {status}")
-                    self.imprimir_info(f"Total: {dados.get('total_price')}€ | ID Pedido: {dados.get('order_id')}")
+                    self.imprimir_info(f"Pedido: {dados.get('order_id')} | Total: {dados.get('total_price')}€")
                 else:
-                    self.imprimir_sucesso(f"Pedido realizado: {resultado}")
+             self.imprimir_sucesso(f"Pedido realizado: {resultado}")
             else:
                 self.imprimir_erro(resposta.get('erro'))
         except ValueError:
@@ -320,8 +317,8 @@ class ClienteVendas:
             if not historico:
                 self.imprimir_info("Histórico vazio.")
             else:
-                for h in historico:
-                    print(f"Data: {h['order_date']} | Produto: {h['produto']} | Qtd: {h['quantity']} | Total: {h['quantity']*h['unit_price']:.2f}€ | Status: {h['status']}")
+                for pedido in historico:
+                    print(f"Data: {pedido['order_date']} | Produto: {pedido['produto']} | Qtd: {pedido['quantity']} | Total: {pedido['quantity']*pedido['unit_price']:.2f}€ | Status: {pedido['status']}")
         else:
             self.imprimir_erro(resposta.get('erro'))
         self.pausar()
@@ -362,7 +359,7 @@ class ClienteVendas:
             resultado = resposta.get('resultado')
             if isinstance(resultado, list) and len(resultado) == 2:
                 mensagem, produtos = resultado
-                self.imprimir_aviso(f"ALERTA: {mensagem}")
+                self.imprimir_aviso(f"{mensagem}")
                 for produto in produtos:
                     print(f" - Produto: {produto['nome']} (ID: {produto['id']}) | Stock: {produto['stock']} | Loja: {produto['loja']}")
             elif resultado == "SUCESSO":
@@ -429,10 +426,12 @@ class ClienteVendas:
         self.pausar()
 
     def _remover_produto(self):
-        if not self.utilizador: return
+        if not self.utilizador:
+            return
         produto_id = self.ler_texto("ID Produto a remover:")
         confirmacao = self.ler_texto("Tem a certeza? (s/n):")
-        if confirmacao.lower() != 's': return
+        if confirmacao.lower() != 's':
+            return
         
         resposta = self.rede.enviar('deletar_produto', {**self.utilizador, 'product_id': produto_id})
         if resposta.get('ok'):
@@ -500,6 +499,6 @@ if __name__ == '__main__':
         app = ClienteVendas()
         app.iniciar()
     except KeyboardInterrupt:
-        print("\nEncerrando...")
+        print("\n\nA aplicação foi interrompida pelo utilizador.")
     except Exception as e:
         print(f"Erro fatal: {e}")
