@@ -14,7 +14,7 @@ As informações devem ser salvas e geridas com o uso de base de dados. O contra
 ## Papéis de Utilizador
 
 * **Administrador**: Responsável pela gestão global do sistema e controle de stock.
-* **Vendedor**: Responsável por registar vendas e atender clientes.
+* **Vendedor**: Responsável por registrar vendas e atender clientes.
 * **Cliente**: Realiza consultas de produtos e efetua compras.
 
 ## Funcionalidades do Servidor
@@ -43,7 +43,7 @@ O servidor é o núcleo do sistema, responsável por armazenar, validar e proces
 
 ### 3. Gestão de Vendas
 
-* **Registar venda**:
+* **registrar venda**:
   * Recebe pedido do cliente com ID do produto e quantidade.
   * Verifica stock e atualiza base de dados.
   * Retorna `VENDA_CONFIRMADA` ou `STOCK_INSUFICIENTE`.

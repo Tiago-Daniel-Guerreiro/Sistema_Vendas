@@ -3,1146 +3,1242 @@ import socket
 import os
 import getpass
 import time
-from enums import Cores
 import subprocess
+from enums import Cores
+from console import sucesso, erro, aviso, info, limpar, pausar
 
-DEBUG = False
+# Mapeamento de respostas de sucesso esperadas por comando do servidor.
+# Cada entrada é uma lista de formas esperadas de sucesso (string sem prefixo 'Mensagem.' ou com).
+COMMAND_SUCCESS = {
+    'ping': ['pong'],
+    'help': [],
+    'registrar': ['UTILIZADOR_CRIADO'],
+    'criar_loja': ['ADICIONADO'],
+    'add_product': ['SUCESSO', 'ADICIONADO'],
+    'editar_produto': ['SUCESSO'],
+    'deletar_produto': ['SUCESSO'],
+    'criar_funcionario': ['SUCESSO'],
+    'editar_senha': ['SUCESSO'],
+    'editar_username': ['SUCESSO'],
+    'apagar_utilizador': ['SUCESSO', 'REMOVIDO'],
+    'promover_para_admin': ['SUCESSO'],
+    'criar_loja': ['ADICIONADO'],
+    'realizar_venda': [],  # retorna lista com detalhes do pedido
+    'list_products': [],
+    'listar_lojas': [],
+    'ver_meu_historico': [],
+    'listar_pedidos': [],
+}
+
+class InterfaceUtilizador:
+    @staticmethod
+    def limpar():
+        limpar()
+
+    @staticmethod
+    def mostrar_cabecalho(texto):
+        info(f"\n{Cores.ROXO}{Cores.NEGRITO}{texto}{Cores.NORMAL}")
+
+    @staticmethod
+    def mostrar_sucesso(mensagem):
+        sucesso(f"Sucesso: {mensagem}")
+
+    @staticmethod
+    def mostrar_erro(mensagem):
+        erro(f"Erro: {mensagem}")
+
+    @staticmethod
+    def mostrar_aviso(mensagem):
+        aviso(f"Aviso: {mensagem}")
+
+    @staticmethod
+    def mostrar_info(mensagem):
+        info(mensagem)
+
+    @staticmethod
+    def eh_sucesso_resposta(resposta, aceitos=None, comando=None, sessao=None):
+        if resposta is None:
+            return False
+        if isinstance(resposta, dict):
+            resultado = resposta.get('resultado')
+        else:
+            resultado = None
+        # Se aceitos não for passado, tenta buscar da sessão
+        if aceitos is None and comando and sessao and sessao.comandos_disponiveis:
+            aceitos = sessao.comandos_disponiveis.get(comando, {}).get('mensagens_sucesso', [])
+        if not aceitos:
+            aceitos = []
+        if isinstance(resultado, str):
+            res_clean = resultado.strip()
+            res_no_prefix = res_clean.replace('Mensagem.', '')
+            variants = {res_clean, res_clean.upper(), res_no_prefix, res_no_prefix.upper()}
+            for a in aceitos:
+                if a in variants or a.upper() in variants:
+                    return True
+            if 'SUCESSO' in res_clean.upper() or res_no_prefix.upper() == 'ADICIONADO' or 'REMOVIDO' in res_clean.upper():
+                return True
+        if isinstance(resultado, (dict, list)):
+            return True
+        if resposta.get('ok') and not aceitos:
+            return True
+        return False
+
+    @staticmethod
+    def ler_texto(mensagem, obrigatorio=True):
+        while True:
+            valor = input(f"{Cores.AZUL}{mensagem}{Cores.NORMAL} ").strip()
+            
+            if obrigatorio and (valor == None or valor == ""):
+                print(f"{Cores.VERMELHO}Este campo não pode estar vazio.{Cores.NORMAL}")
+                continue
+            
+            return valor
+
+    @staticmethod
+    def ler_senha(mensagem, obrigatorio=True):
+        # Se obrigatório, permite até 3 tentativas vazias e depois retorna None
+        tentativas = 0
+        while True:
+            valor = getpass.getpass(f"{Cores.AZUL}{mensagem}{Cores.NORMAL} ").strip()
+
+            if obrigatorio:
+                if valor == "":
+                    tentativas += 1
+                    if tentativas >= 3:
+                        # sinaliza cancelamento/aborto
+                        return None
+                    print(f"{Cores.VERMELHO}A senha não pode estar vazia. Tentativa {tentativas}/3.{Cores.NORMAL}")
+                    continue
+                return valor
+
+            # Se não obrigatório, permite retornar string vazia
+            return valor
+
+    @staticmethod
+    def pausar():
+        try:
+            pausar()
+        except (KeyboardInterrupt, EOFError):
+            erro("Saindo...")
+            exit(0)
+
+    @staticmethod
+    def mostrar_tabela(lista_dados, configuracao_colunas):
+        if not lista_dados:
+            InterfaceUtilizador.mostrar_aviso("Nenhum registro encontrado.")
+            return False
+
+        # Se o servidor retornar um dict (por exemplo {id: {..}}), converte para lista
+        if isinstance(lista_dados, dict):
+            lista_dados = list(lista_dados.values())
+
+        # Preparar o Cabeçalho e o Separador
+        titulos_formatados = []
+        tracos_separadores = []
+        
+        #ljust exemplo: "Ola".ljust(10) = "Ola       "
+        for coluna in configuracao_colunas:
+            tracos_separadores.append("-" * coluna['largura'])
+            titulos_formatados.append(coluna['titulo'].ljust(coluna['largura']))
+
+        # Juntar tudo com um espaço entre colunas
+        linha_cabecalho = " ".join(titulos_formatados)
+        linha_separador = " ".join(tracos_separadores)
+
+        # Mostra o Cabeçalho
+        info(f"\n{Cores.NEGRITO}{linha_cabecalho}{Cores.NORMAL}")
+        info(f"{Cores.CINZA}{linha_separador}{Cores.NORMAL}")
+
+        # Monta todas as linhas antes de imprimir para poder avaliar conteúdo
+        linhas = []
+        for item in lista_dados:
+            colunas_linha = []
+            tem_valor_real = False
+
+            for coluna in configuracao_colunas:
+                chave = coluna['chave']
+                tamanho = coluna['largura']
+
+                # Garante que item suporta .get
+                if not hasattr(item, 'get'):
+                    # item é provavelmente uma string ou outro tipo; embalamos num dict
+                    item = {'valor': item}
+
+                valor = item.get(chave, "N/A")
+
+                # Formatação simples de preço
+                if isinstance(valor, float):
+                    texto_valor = f"{valor:.2f}"
+                else:
+                    texto_valor = str(valor)
+
+                if texto_valor.strip() != "N/A":
+                    tem_valor_real = True
+
+                colunas_linha.append(texto_valor.ljust(tamanho))
+
+            if tem_valor_real:
+                linhas.append(" ".join(colunas_linha))
+
+        # Se não houver linhas com valores reais, considera nenhum registro
+        if not linhas:
+            InterfaceUtilizador.mostrar_aviso("Nenhum registro encontrado.")
+            return False
+
+        # Imprime as linhas válidas
+        for linha in linhas:
+            info(linha)
+        info("")
+        return True
+
+    @staticmethod
+    def exibir_menu(titulo, opcoes, sair_texto="Sair", ):
+        # Exibe um menu simples. Se `opcoes` estiver vazio mostra uma mensagem e volta.
+        while True:
+            InterfaceUtilizador.pausar()
+            InterfaceUtilizador.limpar()
+            InterfaceUtilizador.mostrar_cabecalho(titulo)
+
+            if not opcoes:
+                return
+
+            for indice, (texto, _) in enumerate(opcoes, 1):
+                info(f"{indice}) {texto}")
+            info(f"0) {sair_texto}")
+
+            escolha = InterfaceUtilizador.ler_texto("Opção:", obrigatorio=False)
+
+            if escolha == '0':
+                return
+            if escolha == '' or not escolha.isdigit():
+                InterfaceUtilizador.mostrar_aviso("Por favor, selecione uma opção válida.")
+                continue
+
+            try:
+                indice_escolhido = int(escolha) - 1
+                if 0 <= indice_escolhido < len(opcoes):
+                    funcao = opcoes[indice_escolhido][1]
+                    fechar = funcao()
+                    if fechar is True:
+                        return
+                else:
+                    InterfaceUtilizador.mostrar_erro("Opção inválida.")
+                    continue
+            except ValueError:
+                InterfaceUtilizador.mostrar_erro("Introduza apenas números.")
 
 class ClienteRede:
-    def __init__(self, host, port):
+    def __init__(self, host, porta, debug=False, sessao=None):
         self.host = host
-        self.port = port
+        self.porta = porta
+        self.debug = debug
+        self.timeout = 5
+        self.sessao = sessao
+        self.tokens = self._carregar_tokens()
+
+    def _carregar_tokens(self):
+        caminho = 'tokens.txt'
+        tokens = {}
+        if os.path.exists(caminho):
+            try:
+                with open(caminho, 'r', encoding='utf-8') as f:
+                    for linha in f:
+                        linha = linha.strip()
+                        if ':' in linha:
+                            username, token = linha.split(':', 1)
+                            tokens[username] = token
+            except Exception:
+                pass
+        return tokens
+
+    def _salvar_token(self, username, token):
+        caminho = 'tokens.txt'
+        self.tokens[username] = token
+        try:
+            with open(caminho, 'w', encoding='utf-8') as f:
+                for user, tkn in self.tokens.items():
+                    f.write(f'{user}:{tkn}\n')
+        except Exception:
+            pass
+
+    def _remover_token(self, username):
+        caminho = 'tokens.txt'
+        if username in self.tokens:
+            del self.tokens[username]
+            try:
+                with open(caminho, 'w', encoding='utf-8') as f:
+                    for user, tkn in self.tokens.items():
+                        f.write(f'{user}:{tkn}\n')
+            except Exception:
+                pass
 
     def testar_ping(self):
-        comando = ['ping', '-n', '1', self.host]
         try:
-            resultado = subprocess.run(comando, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=2)
-            return resultado.returncode == 0
+            resposta = self.enviar_comando('ping')
+            if resposta.get('ok'):
+                resultado = resposta.get('resultado')
+                if resultado == 'pong' or (isinstance(resultado, dict) and resultado.get('cargo')):
+                    return True
+            return False
         except Exception:
             return False
 
-    def enviar(self, acao, parametros=None):
+    def enviar_comando(self, acao, parametros=None):
         if parametros is None:
             parametros = {}
-        
-        dados_json = json.dumps({'acao': acao, 'parametros': parametros}) + '\n'
-        
+        # Adiciona token de sessão se existir
+        if self.sessao is not None and hasattr(self.sessao, 'token_sessao') and self.sessao.token_sessao:
+            parametros['token_sessao'] = self.sessao.token_sessao
+        pacote = {'acao': acao, 'parametros': parametros}
+        dados_json = json.dumps(pacote) + '\n'
         try:
-            with socket.create_connection((self.host, self.port), timeout=5) as conexao:
+            # Conexão socket
+            with socket.create_connection((self.host, self.porta), timeout=self.timeout) as conexao:
                 conexao.sendall(dados_json.encode('utf-8'))
-                
                 resposta_bytes = b''
                 while True:
-                    parte = conexao.recv(4096) # Recebe 4096 bytes por vez
+                    parte = conexao.recv(4096)
                     if not parte:
                         break
-                    
                     resposta_bytes += parte
                     if b'\n' in parte:
                         break
-                
-                resposta_str = resposta_bytes.decode('utf-8').strip()
-                if not resposta_str:
+                resposta_texto = resposta_bytes.decode('utf-8').strip()
+                if not resposta_texto:
+                    if self.sessao is not None:
+                        self.sessao.encerrar_sessao()
+                    InterfaceUtilizador.mostrar_aviso("Desconectado do servidor. Sessão encerrada.")
                     return {'ok': False, 'erro': 'Resposta vazia do servidor'}
-                
-                global DEBUG
-                if DEBUG:
-                    print(f"{Cores.CINZA}{resposta_str}{Cores.NORMAL}")
-
-                return json.loads(resposta_str)
+                if self.debug:
+                    print(f"{Cores.CINZA}{resposta_texto}{Cores.NORMAL}")
+                return json.loads(resposta_texto)
         except ConnectionRefusedError:
-            return {'ok': False, 'erro': 'Não foi possível conectar ao servidor.'}
-        except Exception as e:
-            return {'ok': False, 'erro': f'Erro de comunicação: {str(e)}'}
-
-class ClienteVendas:
-    def __init__(self, host, port):
-        self.rede = ClienteRede(host, port)
-        self.utilizador = None
+            if self.sessao is not None:
+                self.sessao.encerrar_sessao()
+            InterfaceUtilizador.mostrar_aviso("Servidor desconectado. Sessão encerrada.")
+            return {'ok': False, 'erro': 'Conexão recusada. Verifique se o servidor está ligado.'}
+        except Exception as erro:
+            if self.sessao is not None:
+                self.sessao.encerrar_sessao()
+            InterfaceUtilizador.mostrar_aviso("Erro de comunicação. Sessão encerrada.")
+            return {'ok': False, 'erro': f'Erro de comunicação: {str(erro)}'}
+                
+class SessaoCliente:
+    def __init__(self):
+        self.utilizador_atual = None
         self.cargo = None
         self.comandos_disponiveis = {}
+        self.token_sessao = None
 
-    def limpar_tela(self):
-        os.system('cls')
+    def iniciar_sessao(self, dados_login, cargo, token_sessao=None):
+        self.utilizador_atual = dados_login
+        self.cargo = cargo
+        self.token_sessao = token_sessao
 
-    def mostrar_cabecalho(self, texto):
-        print(f"\n{Cores.ROXO}{Cores.NEGRITO}{texto} {Cores.NORMAL}")
+    def encerrar_sessao(self):
+        self.utilizador_atual = None
+        self.cargo = None
+        self.comandos_disponiveis = {}
+        self.token_sessao = None
 
-    def mostrar_sucesso(self, texto):
-        print(f"{Cores.VERDE}Sucesso: {texto}{Cores.NORMAL}")
+    def esta_logado(self):
+        if self.utilizador_atual is not None:
+            return True
+        return False
 
-    def mostrar_erro(self, texto):
-        print(f"{Cores.VERMELHO}Erro: {texto}{Cores.NORMAL}")
+    def obter_credenciais(self):
+        cred = {}
+        if self.token_sessao:
+            cred['token_sessao'] = self.token_sessao
+        return cred
 
-    def mostrar_info(self, texto):
-        print(f"{Cores.CIANO}{texto}{Cores.NORMAL}")
+class ControladorAutenticacao:
+    def __init__(self, rede, sessao):
+        self.rede = rede
+        self.sessao = sessao
 
-    def mostrar_aviso(self, texto):
-        print(f"{Cores.AMARELO}Aviso: {texto}{Cores.NORMAL}")
-
-    def ler_texto(self, prompt):
-        return input(f"{Cores.AZUL}{prompt}{Cores.NORMAL}").strip()
-
-    def ler_segredo(self, prompt):
-        return getpass.getpass(f"{Cores.AZUL}{prompt}{Cores.NORMAL}").strip()
-
-    def pausar(self): 
-        try: # Para Garantir que não aparece um erro ao terminar o programa
-            input(f"\n{Cores.NEGRITO}Pressione ENTER para continuar...{Cores.NORMAL}")
-        except (KeyboardInterrupt, EOFError):
-            print(f"\n\n{Cores.ROXO}Programa encerrado pelo utilizador.{Cores.NORMAL}")
-            exit(0)
-
-    def executar_menu(self, titulo, opcoes, condicao_de_saida_lambda = None):
-        while True:
-            if condicao_de_saida_lambda is not None and condicao_de_saida_lambda() == True:
-                return # Se houver uma condição especial e ela for comprida retorna
-
-            self.mostrar_cabecalho(titulo)
-            
-            for indice, (descricao, _) in enumerate(opcoes, 1):
-                print(f"{indice}) {descricao}")
-                
-            print("\n0) Voltar/Sair")
-            
-            texto_opcao = self.ler_texto("Opção:")
-
-            if texto_opcao == '0':
-                return
-            
-            try:
-                indice_selecionado = int(texto_opcao) - 1
-                if 0 <= indice_selecionado < len(opcoes):
-                    opcoes[indice_selecionado][1]() # Executa a ação associada à opção
-                else:
-                    self.mostrar_erro("Opção inválida")
-            except ValueError:
-                self.mostrar_erro("Opção inválida")
-
-            self.pausar()
-            self.limpar_tela()
-
-    def iniciar(self):
-        self.limpar_tela()
-        while True:
-            self.mostrar_cabecalho("Sistema de Vendas")
-            if not self._verificar_conexao():
-                continue
-
-            self._atualizar_comandos()
-            if not self.utilizador:
-                self._menu_inicial()
+    def fazer_login(self):
+        InterfaceUtilizador.limpar()
+        InterfaceUtilizador.mostrar_cabecalho("Login")
+        contas = self.rede.tokens
+        usernames = list(contas.keys())
+        print("Sessões salvas:")
+        for i, username in enumerate(usernames, 1):
+            print(f"{i}) {username}")
+        print(f"{len(usernames)+1}) Outra conta")
+        escolha = InterfaceUtilizador.ler_texto("Selecione o número da conta ou crie nova:")
+        if escolha.isdigit() and 1 <= int(escolha) <= len(usernames):
+            username = usernames[int(escolha)-1]
+            token = contas[username]
+            resposta = self.rede.enviar_comando('autenticar', {'username': username, 'token_sessao': token})
+            if resposta.get('ok') and isinstance(resposta.get('resultado'), dict):
+                self.sessao.iniciar_sessao({'username': username}, resposta['resultado'].get('cargo'), token_sessao=token)
+                InterfaceUtilizador.mostrar_sucesso(f"Bem-vindo, {username} ({self.sessao.cargo})")
+                return True
             else:
-                self._menu_principal()
+                InterfaceUtilizador.mostrar_aviso("Token inválido ou expirado. Será necessário informar a senha.")
+                senha = InterfaceUtilizador.ler_senha(f"Senha para {username}:")
+                resposta = self.rede.enviar_comando('autenticar', {'username': username, 'password': senha})
+                if resposta.get('ok') and isinstance(resposta.get('resultado'), dict):
+                    novo_token = resposta['resultado'].get('token_sessao')
+                    if novo_token:
+                        self.rede._salvar_token(username, novo_token)
+                        self.sessao.iniciar_sessao({'username': username}, resposta['resultado'].get('cargo'), token_sessao=novo_token)
+                        InterfaceUtilizador.mostrar_sucesso(f"Bem-vindo, {username} ({self.sessao.cargo})")
+                        return True
+                    else:
+                        InterfaceUtilizador.mostrar_erro("Token não recebido do servidor.")
+                else:
+                    InterfaceUtilizador.mostrar_erro(resposta.get('erro', 'Erro no login'))
+                InterfaceUtilizador.pausar()
+        elif escolha == str(len(usernames)+1):
+            utilizador = InterfaceUtilizador.ler_texto("Utilizador:")
+            if not utilizador:
+                InterfaceUtilizador.mostrar_erro("Username não pode estar vazio.")
+                InterfaceUtilizador.pausar()
+                return
+            senha = InterfaceUtilizador.ler_senha("Senha:")
+            if not senha:
+                InterfaceUtilizador.mostrar_erro("Senha não pode estar vazia.")
+                InterfaceUtilizador.pausar()
+                return
+            resposta = self.rede.enviar_comando('autenticar', {'username': utilizador, 'password': senha})
+            if resposta.get('ok') and isinstance(resposta.get('resultado'), dict):
+                novo_token = resposta['resultado'].get('token_sessao')
+                if novo_token:
+                    self.rede._salvar_token(utilizador, novo_token)
+                    self.sessao.iniciar_sessao({'username': utilizador}, resposta['resultado'].get('cargo'), token_sessao=novo_token)
+                    InterfaceUtilizador.mostrar_sucesso(f"Bem-vindo, {utilizador} ({self.sessao.cargo})")
+                    return True
+                else:
+                    InterfaceUtilizador.mostrar_erro("Token não recebido do servidor.")
+            else:
+                InterfaceUtilizador.mostrar_erro(resposta.get('erro', 'Erro no login'))
+            InterfaceUtilizador.pausar()
+        else:
+            InterfaceUtilizador.mostrar_erro("Opção inválida.")
+            InterfaceUtilizador.pausar()
 
-    def _verificar_conexao(self):
-        # Teste de ping antes de tentar conectar
-        if not self.rede.testar_ping():
-            self._mostrar_erro_rede("Não é possível estabelecer uma ligação com o servidor. Verifique a rede ou a firewall.")
-            return False
+    def registrar_conta(self):
+        InterfaceUtilizador.limpar()
+        InterfaceUtilizador.mostrar_cabecalho("Criar Conta")
 
-        # Testa se o servidor está a usar o servidor correto
-        pong = self.rede.enviar('ping')
-        if not pong.get('ok') or pong.get('resultado') != 'pong':
-            self._mostrar_erro_rede("Servidor não está a executar o script ou não está inicializado.")
-            return False
+        utilizador = InterfaceUtilizador.ler_texto("Novo Utilizador:")
+        senha = InterfaceUtilizador.ler_senha("Senha:")
+        confirmacao = InterfaceUtilizador.ler_senha("Confirmar Senha:")
 
-        # Verifica se o servidor tem comandos essenciais no 'help'
-        help_resp = self.rede.enviar('help')
-        if not help_resp.get('ok'):
-            self._mostrar_erro_rede("Não é possivel enviar comandos, verifique se o servidor ainda está em execução e se está a usar o script correto")
-            return False
+        if senha != confirmacao:
+            InterfaceUtilizador.mostrar_erro("As senhas não coincidem.")
+            return
 
-        categorias = help_resp.get('resultado', {}).get('categorias', {})
-        comandos_essenciais = ['autenticar', 'registar_cliente']
+        resposta = self.rede.enviar_comando('registrar', {'username': utilizador, 'password': senha})
 
-        comandos_servidor = []
-        for categoria in categorias.values():
-            for comando in categoria:
-                comandos_servidor.append(comando)
+        if resposta.get('ok'):
+            resultado = resposta.get('resultado')
+            # Se resultado for dict e tiver token, faz login automático
+            if isinstance(resultado, dict) and resultado.get('token_sessao'):
+                token = resultado.get('token_sessao')
+                cargo = resultado.get('cargo')
+                self.sessao.iniciar_sessao({'username': utilizador, 'password': senha}, cargo, token_sessao=token)
+                InterfaceUtilizador.mostrar_sucesso(f"Conta criada e login automático realizado! Bem-vindo, {utilizador}!")
+                return True
+            elif resultado == 'UTILIZADOR_CRIADO':
+                InterfaceUtilizador.mostrar_sucesso("Conta criada com sucesso!")
+            else:
+                InterfaceUtilizador.mostrar_erro(str(resultado))
+        else:
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
 
-        todos_presentes = True
-        for comando in comandos_essenciais:
-            if comando not in comandos_servidor:
-                todos_presentes = False
-                break
-        if not todos_presentes:
-            self._mostrar_erro_rede("Servidor não está a executar o script correto ou está desatualizado (comandos essenciais ausentes).")
-            return False
-
+    def terminar_sessao(self):
+        # Remove token do arquivo ao fazer logout
+        if self.sessao.utilizador_atual and 'username' in self.sessao.utilizador_atual:
+            username = self.sessao.utilizador_atual['username']
+            self.rede._remover_token(username)
+        self.sessao.encerrar_sessao()
+        InterfaceUtilizador.mostrar_sucesso("Sessão terminada.")
         return True
 
-    def _mostrar_erro_rede(self, mensagem):
-        self.mostrar_erro(mensagem)
-        self.mostrar_info("A tentar novamente em 5 segundos...")
-        time.sleep(5)
-        self.limpar_tela()
+    def alterar_senha(self):
+        # Permitir que o utilizador cancele pressionando Enter (senha vazia)
+        nova_senha = InterfaceUtilizador.ler_senha("Nova Senha:", obrigatorio=False)
+        if not nova_senha:
+            InterfaceUtilizador.mostrar_aviso("Atualização de senha cancelada.")
+            return
 
-    def _atualizar_comandos(self):
-        parametros = {}
-        if self.utilizador:
-            parametros = {'username': self.utilizador['username'], 'password': self.utilizador['password']}
-        
-        resposta = self.rede.enviar('help', parametros)
+        confirmacao = InterfaceUtilizador.ler_senha("Confirmar:", obrigatorio=False)
+        if nova_senha != confirmacao:
+            InterfaceUtilizador.mostrar_erro("Senhas não coincidem.")
+            return
+
+        credenciais = self.sessao.obter_credenciais().copy()
+        credenciais['nova_senha'] = nova_senha
+
+        resposta = self.rede.enviar_comando('editar_senha', credenciais)
+
         if resposta.get('ok'):
-            self.comandos_disponiveis = resposta.get('resultado', {}).get('categorias', {})
-            if 'cargo' in resposta.get('resultado', {}):
-                self.cargo = resposta['resultado']['cargo']
-
-    def _menu_inicial(self):
-        opcoes = [
-            ("Login", self._fazer_login),
-            ("Registar Cliente", self._registar_cliente)
-        ]
-        # Sai do menu se o utilizador iniciar sessão 
-        self.executar_menu("Bem-vindo", opcoes, condicao_de_saida_lambda=lambda: self.utilizador is not None)
-        
-        # Se saiu do menu e não logou, encerra o app (quando o utilizador escolhe 0 sem iniciar sessão)
-        if not self.utilizador:
-            self.mostrar_info("A sair...")
-            exit(0)
-
-    def _menu_principal(self):
-        if not self.utilizador: 
-            return
-        
-        opcoes = []
-        
-        if 'compras' in self.comandos_disponiveis:
-            opcoes.append(('Compras', self._menu_compras))
-            
-        if 'pedidos' in self.comandos_disponiveis:
-            opcoes.append(('Gestão de Loja', self._menu_loja))
-            
-        if 'administracao' in self.comandos_disponiveis or 'produtos' in self.comandos_disponiveis:
-            opcoes.append(('Administração', self._menu_administracao))
-            
-        opcoes.append(('Minha Conta', self._menu_conta))
-        
-        # Sai do menu se o utilizador deslogar
-        self.executar_menu(f"Menu Principal - {self.utilizador['username']} [{self.cargo}]", opcoes, condicao_de_saida_lambda=lambda: self.utilizador is None)
-        
-        # Se saiu do menu e ainda está logado, significa que escolheu 0 (Sair do App)
-        if self.utilizador:
-            self.mostrar_info("A sair...")
-            exit(0)
-
-    def _menu_compras(self):
-        opcoes = [
-            ("Listar Produtos", self._listar_produtos),
-            ("Realizar Compra", self._realizar_compra),
-            ("Meu Histórico", self._ver_historico)
-        ]
-        self.executar_menu("Compras", opcoes)
-
-    def _menu_loja(self):
-        opcoes = [
-            ("Listar Pedidos da Loja", self._listar_pedidos_loja),
-            ("Concluir Pedido", self._concluir_pedido),
-            ("Verificar Stock Baixo", self._verificar_stock)
-        ]
-        self.executar_menu("Gestão de Loja", opcoes)
-
-    def _menu_administracao(self):
-        opcoes = []
-        todos_comandos = []
-        for categoria in ['administracao', 'produtos', 'autenticacao']:
-            if categoria in self.comandos_disponiveis:
-                todos_comandos.extend(self.comandos_disponiveis[categoria])
-        
-        # Gestão de Produtos
-        if 'add_product' in todos_comandos:
-            opcoes.append(("Adicionar Produto", self._adicionar_produto))
-        if 'editar_produto' in todos_comandos:
-            opcoes.append(("Editar Produto", self._editar_produto))
-        if 'deletar_produto' in todos_comandos:
-            opcoes.append(("Remover Produto", self._remover_produto))
-        
-        # Gestão de Lojas (Admin)
-        if self.cargo == 'admin':
-            opcoes.append(("Criar Loja", self._criar_loja))
-            opcoes.append(("Editar Loja", self._editar_loja))
-            opcoes.append(("Remover Loja", self._remover_loja))
-            opcoes.append(("Listar Utilizadores", self._listar_utilizadores))
-        
-        # Gestão de Funcionários
-        if 'criar_funcionario' in todos_comandos:
-            opcoes.append(("Criar Funcionário", self._criar_funcionario))
-            
-        self.executar_menu("Administração", opcoes)
-
-    def _menu_conta(self):
-        opcoes = [ ("Alterar Senha", self._alterar_senha) ]
-        
-        if 'promover_para_admin' in self.comandos_disponiveis.get('autenticacao', []):
-            opcoes.append(("Promover a Admin", self._promover_admin))
-        
-        opcoes.append(("Editar Username", self._editar_username))
-        opcoes.append(("Logout", self._fazer_logout))
-        
-        # Sai do menu se deslogar
-        self.executar_menu("Minha Conta", opcoes, condicao_de_saida_lambda=lambda: self.utilizador is None)
-
-    def _fazer_login(self):
-        self.mostrar_cabecalho("Login")
-        utilizador = self.ler_texto("Username:")
-        if not utilizador:
-            self.mostrar_erro("Username não pode estar vazio.")
-            self.pausar()
-            return
-            
-        senha = self.ler_segredo("Password:")
-        if not senha:
-            self.mostrar_erro("Password não pode estar vazia.")
-            self.pausar()
-            return
-        
-        resposta = self.rede.enviar('autenticar', {'username': utilizador, 'password': senha})
-        if resposta.get('ok'):
-            resultado = resposta.get('resultado')
-            # Verifica se resultado é um dicionário
-            if isinstance(resultado, dict):
-                self.utilizador = {'username': utilizador, 'password': senha}
-                self.cargo = resultado.get('cargo', 'desconhecido')
-                self.mostrar_sucesso(f"Bem-vindo, {utilizador} ({self.cargo})")
-            else:
-                self.mostrar_erro(f"{resultado}")
-                self.pausar()
+            InterfaceUtilizador.mostrar_sucesso("Senha alterada com sucesso. Faça login novamente.")
+            self.sessao.encerrar_sessao()
         else:
-            self.mostrar_erro(resposta.get('erro', 'Erro no login'))
-            self.pausar()
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
 
-    def _registar_cliente(self):
-        self.mostrar_cabecalho("Registo")
-        utilizador = self.ler_texto("Username:")
-        if not utilizador:
-            self.mostrar_erro("Username não pode estar vazio.")
-            self.pausar()
-            return
-            
-        senha = self.ler_segredo("Password:")
-        if not senha:
-            self.mostrar_erro("Password não pode estar vazia.")
-            self.pausar()
-            return
-            
-        confirmacao = self.ler_segredo("Confirmar Password:")
-        
-        if senha != confirmacao:
-            self.mostrar_erro("As passwords não coincidem.")
-            self.pausar()
-            return
+    def editar_username(self):
+        InterfaceUtilizador.mostrar_cabecalho("Editar Username")
 
-        resposta = self.rede.enviar('registar_cliente', {'username': utilizador, 'password': senha})
+        novo_username = InterfaceUtilizador.ler_texto("Novo Username:")
+        credenciais = self.sessao.obter_credenciais().copy()
+        credenciais['novo_username'] = novo_username
+
+        resposta = self.rede.enviar_comando('editar_username', credenciais)
+
         if resposta.get('ok'):
-            resultado = resposta.get('resultado', '')
-            # Verificar se é mensagem de sucesso
-            if resultado == 'UTILIZADOR_CRIADO':
-                self.mostrar_sucesso("Conta criada com sucesso! Faça login para continuar.")
-            else:
-                # Qualquer outro resultado é erro
-                self.mostrar_erro(f"{resultado}")
+            self.sessao.utilizador_atual['username'] = novo_username
+            InterfaceUtilizador.mostrar_sucesso("Username alterado com sucesso. Faça login novamente.")
+            self.sessao.encerrar_sessao()
         else:
-            self.mostrar_erro(resposta.get('erro', 'Erro ao criar conta'))
-        self.pausar()
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
 
-    def _fazer_logout(self):
-        self.utilizador = None
-        self.cargo = None
-        self.mostrar_sucesso("Logout efetuado.")
-    
-    def _editar_username(self):
-        if not self.utilizador:
-            return
-        self.mostrar_cabecalho("Editar Username")
-        
-        print(f"Username atual: {Cores.CIANO}{self.utilizador.get('username', 'N/A')}{Cores.NORMAL}\n")
-        
-        novo_username = self.ler_texto("Novo Username:")
-        if not novo_username:
-            self.mostrar_erro("Username não pode estar vazio.")
-            self.pausar()
-            return
-        
-        # Confirmação
-        confirmacao = self.ler_texto(f"Alterar username para '{novo_username}'? (s/n):")
+    def apagar_utilizador(self):
+        InterfaceUtilizador.mostrar_cabecalho("Apagar Utilizador")
+
+        confirmacao = InterfaceUtilizador.ler_texto("Tem certeza que deseja apagar sua conta? (s/n):")
         if confirmacao.lower() != 's':
-            self.mostrar_info("Operação cancelada.")
-            self.pausar()
+            InterfaceUtilizador.mostrar_aviso("Operação cancelada.")
             return
-        
-        parametros = {**self.utilizador, 'novo_username': novo_username}
-        resposta = self.rede.enviar('editar_username', parametros)
-        
-        if resposta.get('ok'):
-            resultado = resposta.get('resultado', '')
-            
-            # Verificar se é mensagem de sucesso
-            if resultado == 'ATUALIZADO':
-                self.mostrar_sucesso("Username atualizado com sucesso!")
-                self.mostrar_info("Por favor, faça login novamente com o novo username.")
-                self.utilizador = None  # Forçar logout
-                self.cargo = None
-            else:
-                # Qualquer outro resultado é erro
-                if resultado == 'UTILIZADOR_JA_EXISTE':
-                    self.mostrar_erro("Username já está em uso por outro utilizador.")
-                else:
-                    self.mostrar_erro(f"{resultado}")
-        else:
-            self.mostrar_erro(resposta.get('erro', 'Erro ao editar username'))
-        
-        self.pausar()
 
-    def _listar_produtos(self):
-        if not self.utilizador: 
-            return
-        self.mostrar_cabecalho("Listar Produtos")
-        # Listar lojas antes de pedir o ID
-        resposta_lojas = self.rede.enviar('listar_lojas')
-        if resposta_lojas.get('ok'):
-            lojas = resposta_lojas.get('resultado', [])
-            if not lojas:
-                self.mostrar_erro("Nenhuma loja disponível.")
-                self.pausar()
-                return
-            print("\nLojas disponíveis:")
-            for loja in lojas:
-                print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
+        credenciais = self.sessao.obter_credenciais().copy()
+        resposta = self.rede.enviar_comando('apagar_utilizador', credenciais)
+        aceitos = COMMAND_SUCCESS.get('apagar_utilizador', [])
+        if InterfaceUtilizador.eh_sucesso_resposta(resposta, aceitos=aceitos):
+            InterfaceUtilizador.mostrar_sucesso("Conta apagada com sucesso.")
+            self.sessao.encerrar_sessao()
+            return True
         else:
-            self.mostrar_erro("Erro ao carregar lojas.")
-            self.pausar()
-            return
-        loja_id = self.ler_texto("\nID da Loja (Enter para ver todas):")
-        # Filtros adicionais
-        categoria = self.ler_texto("Categoria (Enter para ignorar):")
-        preco_maximo = self.ler_texto("Preço Máximo (Enter para ignorar):")
-        parametros = {**self.utilizador}
-        if loja_id and loja_id.isdigit():
-            parametros['store_id'] = loja_id  # Enviar como string
-        if categoria: 
-            parametros['categoria'] = categoria
-        if preco_maximo:
-            try: 
-                float(preco_maximo)  # Valida se é número
-                parametros['preco_max'] = preco_maximo  # Enviar como string
-            except: 
-                pass
-        resposta = self.rede.enviar('list_products', parametros)
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro') or str(resposta.get('resultado')))
+
+    def promover_para_admin(self):
+        InterfaceUtilizador.mostrar_cabecalho("Promover para Admin")
+        chave = InterfaceUtilizador.ler_texto("Chave de promoção:")
+        parametros = self.sessao.obter_credenciais().copy()
+        parametros['chave'] = chave
+        resposta = self.rede.enviar_comando('promover_para_admin', parametros)
+        if InterfaceUtilizador.eh_sucesso_resposta(resposta, aceitos=COMMAND_SUCCESS.get('promover_para_admin', [])):
+            InterfaceUtilizador.mostrar_sucesso("Promovido a admin com sucesso. Faça login novamente.")
+            self.sessao.encerrar_sessao()
+        else:
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro') or str(resposta.get('resultado')))
+            self.sessao.encerrar_sessao()
+
+class ControladorLoja:
+    # Métodos de aviso para comandos referenciados mas não implementados
+    def deletar_pedido(self):
+        InterfaceUtilizador.mostrar_aviso("Funcionalidade deletar_pedido ainda não implementada no cliente.")
+
+    def editar_produto_admin(self):
+        InterfaceUtilizador.mostrar_aviso("Funcionalidade editar_produto (admin) ainda não implementada no cliente.")
+
+    def listar_categorias(self):
+        InterfaceUtilizador.mostrar_aviso("Funcionalidade listar_categorias ainda não implementada no cliente.")
+
+    def listar_nomes_produtos(self):
+        InterfaceUtilizador.mostrar_aviso("Funcionalidade listar_nomes_produtos ainda não implementada no cliente.")
+
+    def listar_descricoes(self):
+        InterfaceUtilizador.mostrar_aviso("Funcionalidade listar_descricoes ainda não implementada no cliente.")
+
+    def criar_loja(self):
+        InterfaceUtilizador.mostrar_aviso("Funcionalidade criar_loja ainda não implementada no cliente.")
+
+    def editar_loja(self):
+        InterfaceUtilizador.mostrar_aviso("Funcionalidade editar_loja ainda não implementada no cliente.")
+
+    def apagar_loja(self):
+        InterfaceUtilizador.mostrar_aviso("Funcionalidade apagar_loja ainda não implementada no cliente.")
+
+    def criar_funcionario(self):
+        InterfaceUtilizador.mostrar_aviso("Funcionalidade criar_funcionario ainda não implementada no cliente.")
+    def __init__(self, rede, sessao):
+        self.rede = rede
+        self.sessao = sessao
+
+    def _escolher_loja(self):
+        # Lista lojas para o utilizador escolher
+        parametros = self.sessao.obter_credenciais().copy()
+        resposta = self.rede.enviar_comando('listar_lojas', parametros)
+        
+        if not resposta.get('ok'):
+            InterfaceUtilizador.mostrar_erro("Erro ao listar lojas.")
+            return None
+
+        lojas = resposta.get('resultado', [])
+        
+        colunas = [
+            {'titulo': 'ID', 'chave': 'id', 'largura': 5},
+            {'titulo': 'Nome', 'chave': 'nome', 'largura': 20},
+            {'titulo': 'Localização', 'chave': 'localizacao', 'largura': 20}
+        ]
+        
+        print("\nLojas Disponíveis:")
+        tem = InterfaceUtilizador.mostrar_tabela(lojas, colunas)
+
+        # Se não há lojas (ou se a tabela não imprimiu linhas), não permitir continuar
+        if not lojas or not tem:
+            return None
+
+        id_loja = InterfaceUtilizador.ler_texto("Digite o ID da Loja (Enter para todas):", obrigatorio=False)
+        return id_loja
+
+    def listar_produtos(self):
+        InterfaceUtilizador.mostrar_cabecalho("Produtos")
+        id_loja = self._escolher_loja()
+
+        parametros = self.sessao.obter_credenciais().copy()
+        if id_loja:
+            parametros['store_id'] = id_loja
+
+        resposta = self.rede.enviar_comando('list_products', parametros)
+
         if resposta.get('ok'):
             produtos = resposta.get('resultado', [])
-            if not produtos:
-                self.mostrar_aviso("Nenhum produto encontrado.")
-            else:
-                print(f"\n{Cores.NEGRITO}{'ID':<5} {'Nome':<20} {'Categoria':<15} {'Preço':<10} {'Stock':<8} {'Loja':<15}{Cores.NORMAL}")
-                for produto in produtos:
-                    print(f"{produto['id']:<5} {produto['nome']:<20} {produto['categoria']:<15} {produto['preco']:<10.2f} {produto['stock']:<8} {produto['loja']:<15}")
+
+            colunas = [
+                {'titulo': 'ID', 'chave': 'id', 'largura': 5},
+                {'titulo': 'Produto', 'chave': 'nome', 'largura': 20},
+                {'titulo': 'Categoria', 'chave': 'categoria', 'largura': 15},
+                {'titulo': 'Preço', 'chave': 'preco', 'largura': 10},
+                {'titulo': 'Stock', 'chave': 'stock', 'largura': 8},
+                {'titulo': 'Loja', 'chave': 'loja', 'largura': 15}
+            ]
+            tem = InterfaceUtilizador.mostrar_tabela(produtos, colunas)
+            if not tem:
+                return
         else:
-            self.mostrar_erro(resposta.get('erro', 'Erro ao listar produtos'))
-        self.pausar()
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
 
-    def _realizar_compra(self):
-        if not self.utilizador: 
+    def realizar_compra(self):
+        InterfaceUtilizador.mostrar_cabecalho("Nova Compra")
+        # Primeiro escolhe loja
+        id_loja = self._escolher_loja()
+        if not id_loja:
+            InterfaceUtilizador.mostrar_aviso("Selecione uma loja específica para comprar.")
             return
-        
-        self.mostrar_cabecalho("Realizar Compra")
-        
-        resposta_lojas = self.rede.enviar('listar_lojas')
-        if not resposta_lojas.get('ok') or not resposta_lojas.get('resultado'):
-            self.mostrar_erro("Erro ao carregar lojas.")
-            self.pausar()
-            return
-        
-        lojas = resposta_lojas.get('resultado', [])
-        print("\nLojas disponíveis:")
-        for loja in lojas:
-            print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
-        
-        loja_id = self.ler_texto("\nID da Loja:")
-        if not loja_id or not loja_id.isdigit():
-            self.mostrar_erro("ID da loja inválido.")
-            self.pausar()
-            return
-        
-        parametros_lista = {**self.utilizador, 'store_id': loja_id}
-        resposta_produtos = self.rede.enviar('list_products', parametros_lista)
-        
+
+        # Lista produtos da loja escolhida
+        parametros = self.sessao.obter_credenciais().copy()
+        parametros['store_id'] = id_loja
+        resposta_produtos = self.rede.enviar_comando('list_products', parametros)
+
         if not resposta_produtos.get('ok'):
-            self.mostrar_erro("Erro ao carregar produtos.")
-            self.pausar()
+            InterfaceUtilizador.mostrar_erro(resposta_produtos.get('erro'))
             return
-        
-        produtos = resposta_produtos.get('resultado', [])
-        if not produtos:
-            self.mostrar_aviso("Nenhum produto disponível nesta loja.")
-            self.pausar()
-            return
-        
-        print(f"\n{Cores.NEGRITO}Produtos disponíveis:{Cores.NORMAL}")
-        print(f"{'Nome':<25} {'Categoria':<15} {'Preço':<10} {'Stock':<8}")
-        for produto in produtos:
-            print(f"{produto['nome']:<25} {produto['categoria']:<15} {produto['preco']:<10.2f} {produto['stock']:<8}")
-        
-        nome_produto = self.ler_texto("\nNome do Produto:")
-        if not nome_produto:
-            self.mostrar_erro("Nome do produto não pode estar vazio.")
-            self.pausar()
-            return
-        
-        parametros_busca = {
-            **self.utilizador,
-            'nome_produto': nome_produto,
-            'store_id': loja_id
-        }
-        resposta_busca = self.rede.enviar('buscar_produto_por_nome', parametros_busca)
-        
-        if not resposta_busca.get('ok'):
-            self.mostrar_erro(resposta_busca.get('erro', 'Erro ao buscar produto'))
-            self.pausar()
-            return
-        
-        resultado_busca = resposta_busca.get('resultado')
-        if isinstance(resultado_busca, str):
-            # É um código de erro
-            self.mostrar_erro(f"{resultado_busca}")
-            self.pausar()
-            return
-        
-        # Produto encontrado - verificar se é um dicionário válido
-        if not isinstance(resultado_busca, dict):
-            self.mostrar_erro("Resposta inválida do servidor")
-            self.pausar()
-            return
-            
-        produto_info = resultado_busca
-        self.mostrar_info(f"Produto: {produto_info['nome']} | Preço: {produto_info['preco']}€ | Stock: {produto_info['stock']}")
-        
-        quantidade = self.ler_texto("Quantidade:")
-        if not quantidade.isdigit() or int(quantidade) <= 0:
-            self.mostrar_erro("Quantidade deve ser um número maior que zero.")
-            self.pausar()
-            return
-        
-        try:
-            itens = {str(produto_info['id']): int(quantidade)}
-            resposta = self.rede.enviar('realizar_venda', {**self.utilizador, 'itens': itens})
-            
-            if resposta.get('ok'):
-                resultado = resposta.get('resultado')
-                if isinstance(resultado, list) and len(resultado) == 2:
-                    status, dados = resultado
-                    self.mostrar_sucesso(f"Pedido realizado! Status: {status}")
-                    self.mostrar_info(f"Pedido: {dados.get('order_id')} | Total: {dados.get('total_price')}€")
-                elif isinstance(resultado, str):
-                    self.mostrar_erro(f"{resultado}")
-                else:
-                    self.mostrar_sucesso(f"Pedido realizado: {resultado}")
-            else:
-                self.mostrar_erro(resposta.get('erro', 'Erro desconhecido'))
-        except Exception as e:
-            self.mostrar_erro(f"Erro ao processar compra: {e}")
-        self.pausar()
 
-    def _ver_historico(self):
-        resposta = self.rede.enviar('ver_meu_historico', self.utilizador)
+        produtos = resposta_produtos.get('resultado', [])
+        colunas = [
+            {'titulo': 'ID', 'chave': 'id', 'largura': 5},
+            {'titulo': 'Produto', 'chave': 'nome', 'largura': 20},
+            {'titulo': 'Categoria', 'chave': 'categoria', 'largura': 15},
+            {'titulo': 'Preço', 'chave': 'preco', 'largura': 10},
+            {'titulo': 'Stock', 'chave': 'stock', 'largura': 8}
+        ]
+
+        tem = InterfaceUtilizador.mostrar_tabela(produtos, colunas)
+        if not produtos or not tem:
+            InterfaceUtilizador.mostrar_aviso('Nenhum produto disponível nesta loja.')
+            return
+
+        id_produto = InterfaceUtilizador.ler_texto('ID do Produto:')
+        if not id_produto.isdigit():
+            InterfaceUtilizador.mostrar_erro('ID inválido.')
+            return
+
+        # Encontrar produto pelo id
+        produto_encontrado = None
+        for p in produtos:
+            try:
+                if int(p.get('id')) == int(id_produto):
+                    produto_encontrado = p
+                    break
+            except Exception:
+                continue
+
+        if produto_encontrado is None:
+            InterfaceUtilizador.mostrar_erro('Produto não encontrado.')
+            return
+
+        InterfaceUtilizador.mostrar_info(f"Produto: {produto_encontrado.get('nome')} | Preço: {produto_encontrado.get('preco')}€ | Stock: {produto_encontrado.get('stock')}")
+
+        quantidade_str = InterfaceUtilizador.ler_texto('Quantidade:')
+        if not quantidade_str.isdigit():
+            InterfaceUtilizador.mostrar_erro('Quantidade inválida.')
+            return
+
+        quantidade = int(quantidade_str)
+
+        parametros_venda = self.sessao.obter_credenciais().copy()
+        parametros_venda['itens'] = {str(produto_encontrado.get('id')): quantidade}
+
+        resposta_venda = self.rede.enviar_comando('realizar_venda', parametros_venda)
+        if resposta_venda.get('ok'):
+            resultado = resposta_venda.get('resultado')
+            if isinstance(resultado, list):
+                dados_pedido = resultado[1]
+                InterfaceUtilizador.mostrar_sucesso(f"Pedido realizado! ID: {dados_pedido.get('order_id')}")
+                InterfaceUtilizador.mostrar_sucesso(f"Total Pago: {dados_pedido.get('total_price'):.2f}€")
+            else:
+                InterfaceUtilizador.mostrar_aviso(str(resultado))
+        else:
+            InterfaceUtilizador.mostrar_erro(resposta_venda.get('erro'))
+
+    def ver_meu_historico(self):
+        InterfaceUtilizador.mostrar_cabecalho("Meu Histórico de Compras")
+
+        parametros = self.sessao.obter_credenciais().copy()
+        resposta = self.rede.enviar_comando('ver_meu_historico', parametros)
+
         if resposta.get('ok'):
             historico = resposta.get('resultado', [])
-            if not historico:
-                self.mostrar_info("Histórico vazio.")
-            else:
-                for pedido in historico:
-                    print(f"Data: {pedido['order_date']} | Produto: {pedido['produto']} | Qtd: {pedido['quantity']} | Total: {pedido['quantity']*pedido['unit_price']:.2f}€ | Status: {pedido['status']}")
-        else:
-            self.mostrar_erro(resposta.get('erro'))
-        self.pausar()
 
-    def _listar_pedidos_loja(self):
-        if not self.utilizador: 
-            return
-        self.mostrar_cabecalho("Pedidos da Loja")
-        filtro = self.ler_texto("Filtrar Status (pendente/concluida/vazio):")
-        parametros = {**self.utilizador}
-        if filtro: parametros['filtro_status'] = filtro
-        
-        resposta = self.rede.enviar('listar_pedidos', parametros)
-        if resposta.get('ok'):
-            pedidos = resposta.get('resultado', [])
-            for produto in pedidos:
-                print(f"ID: {produto['id']} | Data: {produto['order_date']} | Cliente: {produto['cliente']} | Total: {produto['total_price']:.2f}€ | Status: {produto['status']}")
-        else:
-            self.mostrar_erro(resposta.get('erro'))
-        self.pausar()
+            colunas = [
+                {'titulo': 'ID Pedido', 'chave': 'id_pedido', 'largura': 10},
+                {'titulo': 'Data', 'chave': 'data', 'largura': 15},
+                {'titulo': 'Total', 'chave': 'total', 'largura': 10},
+                {'titulo': 'Status', 'chave': 'status', 'largura': 15}
+            ]
 
-    def _concluir_pedido(self):
-        if not self.utilizador: 
-            return
-
-        self.mostrar_cabecalho("Pedidos da Loja")
-        resposta_pedidos = self.rede.enviar('listar_pedidos', self.utilizador)
-        if resposta_pedidos.get('ok'):
-            pedidos = resposta_pedidos.get('resultado', [])
-            if not pedidos:
-                self.mostrar_aviso("Nenhum pedido disponível para concluir.")
-                self.pausar()
+            tem = InterfaceUtilizador.mostrar_tabela(historico, colunas)
+            if not tem:
                 return
-            print("\nPedidos disponíveis:")
-            for pedido in pedidos:
-                print(f"  {pedido['id']}. Cliente: {pedido['cliente']} | Total: {pedido['total_price']:.2f}€ | Status: {pedido['status']}")
         else:
-            self.mostrar_erro("Erro ao listar pedidos.")
-            self.pausar()
-            return
-        pedido_id = self.ler_texto("ID do Pedido a concluir:")
-        resposta = self.rede.enviar('concluir_pedido', {**self.utilizador, 'order_id': pedido_id})
-        if resposta.get('ok') and resposta.get('resultado') == 'SUCESSO':
-            self.mostrar_sucesso("Pedido concluído com sucesso!")
-        else:
-            if resposta.get('resultado'):
-                erro = resposta.get('resultado') 
-            else:
-                erro = resposta.get('erro', 'Erro ao concluir pedido')
-            self.mostrar_erro(erro)
-        self.pausar()
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
 
-    def _verificar_stock(self):
-        if not self.utilizador: 
+    def listar_lojas(self):
+        InterfaceUtilizador.mostrar_cabecalho("Lojas")
+        resposta = self.rede.enviar_comando('listar_lojas', self.sessao.obter_credenciais().copy())
+        if not resposta.get('ok'):
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
             return
-        resposta = self.rede.enviar('verificar_stock_baixo', self.utilizador)
-        if resposta.get('ok'):
-            resultado = resposta.get('resultado')
-            if isinstance(resultado, list) and len(resultado) == 2:
-                mensagem, produtos = resultado
-                self.mostrar_aviso(f"{mensagem}")
-                for produto in produtos:
-                    print(f" - Produto: {produto['nome']} (ID: {produto['id']}) | Stock: {produto['stock']} | Loja: {produto['loja']}")
-            elif resultado == "SUCESSO":
-                self.mostrar_sucesso("Stock está normal (nenhum produto abaixo de 5 unidades).")
-            else:
-                self.mostrar_info(f"Resultado: {resultado}")
-        else:
-            self.mostrar_erro(resposta.get('erro'))
-        self.pausar()
 
-    def _adicionar_produto(self):
-        if not self.utilizador: 
-            return
-        self.mostrar_cabecalho("Novo Produto")
-        # Nome do produto com sugestões obrigatórias
-        nome = self._ler_com_sugestoes("Nome do Produto", "listar_nomes_produtos", permitir_vazio=False)
-        if not nome:
-            self.mostrar_erro("Nome não pode estar vazio.")
-            self.pausar()
-            return
-        # Categoria com sugestões obrigatórias
-        categoria = self._ler_com_sugestoes("Categoria", "listar_categorias", permitir_vazio=False)
-        if not categoria:
-            self.mostrar_erro("Categoria não pode estar vazia.")
-            self.pausar()
-            return
-        # Descrição com sugestões obrigatórias
-        descricao = self._ler_com_sugestoes("Descrição", "listar_descricoes", permitir_vazio=False)
-        if not descricao:
-            self.mostrar_erro("Descrição não pode estar vazia.")
-            self.pausar()
-            return
-        preco = self.ler_texto("Preço:")
-        stock = self.ler_texto("Stock:")
-        # Listar lojas para escolher
-        resposta_lojas = self.rede.enviar('listar_lojas')
-        if resposta_lojas.get('ok'):
-            lojas = resposta_lojas.get('resultado', [])
-            if not lojas:
-                self.mostrar_erro("Nenhuma loja disponível. Crie uma loja primeiro.")
-                self.pausar()
-                return
-            print("\nLojas disponíveis:")
-            for loja in lojas:
-                print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
-        loja_id = self.ler_texto("\nID da Loja:")
-        try:
-            parametros = {
-                **self.utilizador,
-                'nome': nome, 'categoria': categoria, 'descricao': descricao,
-                'preco': preco, 'stock': stock, 'store_id': loja_id
-            }
-            resposta = self.rede.enviar('add_product', parametros)
-            if resposta.get('ok'):
-                self.mostrar_sucesso("Produto adicionado!")
-            else:
-                self.mostrar_erro(resposta.get('erro'))
-        except Exception:
-            self.mostrar_erro("Valores inválidos.")
-        self.pausar()
-    
-    def _ler_com_sugestoes(self, label, acao_listar, permitir_vazio=False):
-        # Buscar sugestões do servidor
-        resposta = self.rede.enviar(acao_listar)
-        sugestoes = []
-        
-        if resposta.get('ok'):
-            sugestoes = resposta.get('resultado', [])
-        
-        if sugestoes:
-            print(f"\n{Cores.CIANO}Valores existentes de {label}:{Cores.NORMAL}")
-            for i, sugestao in enumerate(sugestoes, 1):  # Mostrar apenas 10 primeiros
-                print(f"  {i}. {sugestao}")
-            print(f"\n{Cores.AMARELO}Dica: Digite o número para selecionar ou escreva um novo valor{Cores.NORMAL}")
-        
-        if not permitir_vazio:
-            prompt = f"\n{label}:" 
-        else:
-            prompt = f"{label} (vazio para manter):"
-        entrada = self.ler_texto(prompt)
-        
-        # Se permitir vazio e entrada for vazia, retorna None
-        if permitir_vazio and not entrada:
-            return None
-        # Se for número, tentar selecionar da lista
-        if entrada.isdigit():
-            indice = int(entrada) - 1
-            if 0 <= indice < len(sugestoes):
-                valor_selecionado = sugestoes[indice]
-                print(f"{Cores.VERDE}Selecionado: {valor_selecionado}{Cores.NORMAL}")
-                return valor_selecionado
-        # Caso contrário, retornar o valor digitado
-        return entrada
+        lojas = resposta.get('resultado', [])
+        colunas = [
+            {'titulo': 'ID', 'chave': 'id', 'largura': 5},
+            {'titulo': 'Nome', 'chave': 'nome', 'largura': 20},
+            {'titulo': 'Localização', 'chave': 'localizacao', 'largura': 20}
+        ]
+        InterfaceUtilizador.mostrar_tabela(lojas, colunas)
 
-    def _editar_produto(self):
-        if not self.utilizador: 
+    def buscar_produto_por_nome(self):
+        InterfaceUtilizador.mostrar_cabecalho("Buscar Produto por Nome")
+        # Escolhe loja primeiro
+        id_loja = self._escolher_loja()
+        if not id_loja:
+            InterfaceUtilizador.mostrar_aviso("Seleção de loja cancelada ou sem lojas disponíveis.")
             return
-        self.mostrar_cabecalho("Editar Produto")
-        # Listar produtos antes de pedir o ID
-        resposta_produtos = self.rede.enviar('list_products', self.utilizador)
-        if resposta_produtos.get('ok'):
-            produtos = resposta_produtos.get('resultado', [])
-            if not produtos:
-                self.mostrar_aviso("Nenhum produto disponível para editar.")
-                self.pausar()
-                return
-            print("\nProdutos disponíveis:")
-            for produto in produtos:
-                print(f"  {produto['id']}. {produto['nome']} | Categoria: {produto['categoria']} | Stock: {produto['stock']} | Loja: {produto['loja']}")
-        else:
-            self.mostrar_erro("Erro ao listar produtos.")
-            self.pausar()
-            return
-        produto_id = self.ler_texto("ID Produto:")
-        if not produto_id or not produto_id.isdigit():
-            self.mostrar_erro("ID inválido.")
-            self.pausar()
-            return
-        self.mostrar_info("Deixe em branco para não alterar ou escolha da lista de sugestões")
-        # Nome com sugestões
-        print(f"\n{Cores.AMARELO}Novo Nome{Cores.NORMAL}")
-        novo_nome = self._ler_com_sugestoes("Nome do Produto", "listar_nomes_produtos", permitir_vazio=True)
-        # Categoria com sugestões
-        print(f"\n{Cores.AMARELO}Nova Categoria{Cores.NORMAL}")
-        nova_categoria = self._ler_com_sugestoes("Categoria", "listar_categorias", permitir_vazio=True)
-        # Descrição com sugestões
-        print(f"\n{Cores.AMARELO}Nova Descrição{Cores.NORMAL}")
-        nova_descricao = self._ler_com_sugestoes("Descrição", "listar_descricoes", permitir_vazio=True)
-        novo_preco = self.ler_texto("\nNovo Preço:")
-        novo_stock = self.ler_texto("Novo Stock:")
 
-        parametros = {**self.utilizador, 'product_id': produto_id}
+        # Lista produtos da loja para auxiliar a pesquisa
+        parametros = self.sessao.obter_credenciais().copy()
+        parametros['store_id'] = id_loja
+        resposta = self.rede.enviar_comando('list_products', parametros)
+        if not resposta.get('ok'):
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
+            return
 
-        if novo_nome: 
-            parametros['novo_nome'] = novo_nome
+        produtos = resposta.get('resultado', [])
+        colunas = [
+            {'titulo': 'ID', 'chave': 'id', 'largura': 5},
+            {'titulo': 'Produto', 'chave': 'nome', 'largura': 20},
+            {'titulo': 'Categoria', 'chave': 'categoria', 'largura': 15},
+            {'titulo': 'Preço', 'chave': 'preco', 'largura': 10},
+            {'titulo': 'Stock', 'chave': 'stock', 'largura': 8}
+        ]
+        tem = InterfaceUtilizador.mostrar_tabela(produtos, colunas)
+        if not tem:
+            InterfaceUtilizador.mostrar_aviso('Nenhum produto disponível nesta loja.')
+            return
 
-        if nova_categoria: 
-            parametros['nova_categoria'] = nova_categoria
+        nome = InterfaceUtilizador.ler_texto('Nome do Produto:')
+        parametros = self.sessao.obter_credenciais().copy()
+        parametros['store_id'] = id_loja
+        parametros['nome_produto'] = nome
 
-        if novo_preco: 
-            parametros['novo_preco'] = novo_preco
+        resposta_busca = self.rede.enviar_comando('buscar_produto_por_nome', parametros)
+        if resposta_busca.get('ok'):
+            resultado = resposta_busca.get('resultado')
+            InterfaceUtilizador.mostrar_info(str(resultado))
+        else:
+            InterfaceUtilizador.mostrar_erro(resposta_busca.get('erro') or str(resposta_busca.get('resultado')))
 
-        if novo_stock: 
-            parametros['novo_stock'] = novo_stock
+class ControladorAdministracao:
+    def deletar_pedido(self):
+        InterfaceUtilizador.mostrar_aviso("Funcionalidade deletar_pedido ainda não implementada no cliente.")
 
-        if nova_descricao: 
-            parametros['nova_descricao'] = nova_descricao
+    def listar_categorias(self):
+        InterfaceUtilizador.mostrar_aviso("Funcionalidade listar_categorias ainda não implementada no cliente.")
 
-        if self.cargo == 'admin':
-            # Listar lojas
-            resposta_lojas = self.rede.enviar('listar_lojas')
-            if resposta_lojas.get('ok'):
-                lojas = resposta_lojas.get('resultado', [])
-                if lojas:
-                    print("\nLojas disponíveis:")
-                    for loja in lojas:
-                        print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
-            novo_id_da_loja = self.ler_texto("\nNovo ID Loja:")
-            if novo_id_da_loja: 
-                parametros['novo_id_da_loja'] = novo_id_da_loja
+    def listar_nomes_produtos(self):
+        InterfaceUtilizador.mostrar_aviso("Funcionalidade listar_nomes_produtos ainda não implementada no cliente.")
 
-        resposta = self.rede.enviar('editar_produto', parametros)
-        if resposta.get('ok'):
-            self.mostrar_sucesso("Produto atualizado!")
-        else:
-            self.mostrar_erro(resposta.get('erro'))
-        self.pausar()
-    
-    def _remover_produto(self):
-        if not self.utilizador:
-            return
-        # Listar produtos antes de pedir o ID
-        self.mostrar_cabecalho("Remover Produto")
-        resposta_produtos = self.rede.enviar('list_products', self.utilizador)
-        if resposta_produtos.get('ok'):
-            produtos = resposta_produtos.get('resultado', [])
-            if not produtos:
-                self.mostrar_aviso("Nenhum produto disponível para remover.")
-                self.pausar()
-                return
-            print("\nProdutos disponíveis:")
-            for produto in produtos:
-                print(f"  {produto['id']}. {produto['nome']} | Categoria: {produto['categoria']} | Stock: {produto['stock']} | Loja: {produto['loja']}")
-        else:
-            self.mostrar_erro("Erro ao listar produtos.")
-            self.pausar()
-            return
-        produto_id = self.ler_texto("ID Produto a remover:")
-        confirmacao = self.ler_texto("Tem a certeza? (s/n):")
-        if confirmacao.lower() != 's':
-            return
-        resposta = self.rede.enviar('deletar_produto', {**self.utilizador, 'product_id': produto_id})
-        if resposta.get('ok') and resposta.get('resultado') == 'SUCESSO':
-            self.mostrar_sucesso("Produto removido!")
-        else:
-            if resposta.get('resultado'):
-                erro = resposta.get('resultado')
-            else:
-                erro = resposta.get('erro', 'Erro ao remover produto')
-            self.mostrar_erro(erro)
-        self.pausar()
+    def listar_descricoes(self):
+        InterfaceUtilizador.mostrar_aviso("Funcionalidade listar_descricoes ainda não implementada no cliente.")
+    def __init__(self, rede, sessao):
+        self.rede = rede
+        self.sessao = sessao
 
-    def _criar_funcionario(self):
-        if not self.utilizador: 
-            return
-        self.mostrar_cabecalho("Criar Funcionario")
-        tipo = self.ler_texto("Tipo (admin/vendedor):")
-        loja_id = ""
-        if tipo == 'vendedor':
-            # Listar lojas antes de pedir o ID
-            resposta_lojas = self.rede.enviar('listar_lojas')
-            if resposta_lojas.get('ok'):
-                lojas = resposta_lojas.get('resultado', [])
-                if not lojas:
-                    self.mostrar_erro("Nenhuma loja disponível para associar ao vendedor.")
-                    self.pausar()
-                    return
-                print("\nLojas disponíveis:")
-                for loja in lojas:
-                    print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
-            else:
-                self.mostrar_erro("Erro ao listar lojas.")
-                self.pausar()
-                return
-            loja_id = self.ler_texto("ID Loja:")
-        utilizador = self.ler_texto("Username:")
-        senha = self.ler_segredo("Password:")
-        parametros = {
-            **self.utilizador,
-            'username_func': utilizador, 'password_func': senha,
-            'tipo': tipo, 'loja_id': loja_id
-        }
-        resposta = self.rede.enviar('criar_funcionario', parametros)
-        resultado = resposta.get('resultado')
-        if resposta.get('ok') and resultado == 'UTILIZADOR_CRIADO':
-            self.mostrar_sucesso("Funcionário criado!")
-        else:
-            if resultado is not None:
-                erro = resultado 
-            else:
-                erro = resposta.get('erro', 'Erro ao criar funcionário')
-            self.mostrar_erro(erro)
-        self.pausar()
-    def _apagar_conta(self):
-        if not self.utilizador:
-            return
-        username = self.utilizador.get('username')
-        confirmacao = self.ler_texto(f"Para apagar sua conta, digite exatamente: 'Tenho a certeza {username} que pretendo apagar a conta juntamente com todos os meus dados'")
-        frase_correta = f"Tenho a certeza {username} que pretendo apagar a conta juntamente com todos os meus dados"
-        if confirmacao != frase_correta:
-            self.mostrar_aviso("Confirmação incorreta. Operação cancelada.")
-            self.pausar()
-            return
-        resposta = self.rede.enviar('apagar_utilizador', {**self.utilizador})
-        resultado = resposta.get('resultado')
-        if resposta.get('ok') and resultado == 'REMOVIDO':
-            self.mostrar_sucesso("Conta apagada com sucesso!")
-            self.utilizador = None
-            self.cargo = None
-        elif resultado == 'NAO_PERMITIDO':
-            self.mostrar_erro("Por motivos de segurança essa ação não pode ser efetuada agora. Solicite a um administrador para limpar todos os seus dados.")
-        else:
-            if resultado is not None:
-                erro = resultado 
-            else:
-                erro = resposta.get('erro', 'Erro ao apagar conta')
-            self.mostrar_erro(erro)
+    def menu_admin(self):
+        opcoes = [
+            ("Listar Utilizadores", self.listar_utilizadores),
+            ("Criar Loja", self.criar_loja),
+            ("Editar Loja", self.editar_loja),
+            ("Apagar Loja", self.apagar_loja),
+            ("Adicionar Produto", self.adicionar_produto),
+            ("Editar Produto", self.editar_produto),
+            ("Deletar Produto", self.deletar_produto),
+            ("Criar Funcionário", self.criar_funcionario)
+        ]
 
-        self.pausar()
+        InterfaceUtilizador.exibir_menu("Painel de Administração", opcoes, sair_texto="Voltar")
 
-    def _alterar_senha(self):
-        if not self.utilizador: 
-            return
-        nova_senha = self.ler_segredo("Nova Senha:")
-        confirmacao = self.ler_segredo("Confirmar:")
-        if nova_senha != confirmacao:
-            self.mostrar_erro("Não coincidem.")
-            self.pausar()
-            return
-            
-        resposta = self.rede.enviar('editar_senha', {**self.utilizador, 'nova_senha': nova_senha})
-        if resposta.get('ok'):
-            self.mostrar_sucesso("Senha alterada!")
-            self.utilizador['password'] = nova_senha
-        else:
-            self.mostrar_erro(resposta.get('erro'))
-        self.pausar()
+    def listar_utilizadores(self):
+        InterfaceUtilizador.mostrar_cabecalho("Utilizadores do Sistema")
 
-    def _promover_admin(self):
-        if not self.utilizador: 
-            return
-        chave = self.ler_segredo("Chave de Admin:")
-        resposta = self.rede.enviar('promover_para_admin', {**self.utilizador, 'chave': chave})
-        if resposta.get('ok'):
-            resultado = resposta.get('resultado', '')
-            # Verificar se é mensagem de sucesso
-            if resultado == 'SUCESSO':
-                self.mostrar_sucesso("Promovido a Admin! Faça login novamente para atualizar permissões.")
-                self.utilizador = None # Forçar logout
-            else:
-                # Qualquer outro resultado é erro
-                self.mostrar_erro(f"{resultado}")
-        else:
-            self.mostrar_erro(resposta.get('erro', 'Erro ao promover'))
-        self.pausar()
-    
-    def _criar_loja(self):
-        if not self.utilizador:
-            return
-        self.mostrar_cabecalho("Criar Nova Loja")
-        nome = self.ler_texto("Nome da Loja:")
-        if not nome:
-            self.mostrar_erro("Nome não pode estar vazio.")
-            self.pausar()
-            return
-        
-        localizacao = self.ler_texto("Localização:")
-        if not localizacao:
-            self.mostrar_erro("Localização não pode estar vazia.")
-            self.pausar()
-            return
-        
-        parametros = {**self.utilizador, 'nome': nome, 'localizacao': localizacao}
-        resposta = self.rede.enviar('criar_loja', parametros)
-        
-        if resposta.get('ok'):
-            resultado = resposta.get('resultado', '')
-            # Verificar se é mensagem de sucesso
-            if resultado == 'ADICIONADO':
-                self.mostrar_sucesso("Loja criada com sucesso!")
-            else:
-                # Qualquer outro resultado é erro
-                self.mostrar_erro(f"{resultado}")
-        else:
-            self.mostrar_erro(resposta.get('erro', 'Erro ao criar loja'))
-        self.pausar()
-    
-    def _editar_loja(self):
-        if not self.utilizador:
-            return
-        self.mostrar_cabecalho("Editar Loja")
-        resposta_lojas = self.rede.enviar('listar_lojas')
-        if resposta_lojas.get('ok'):
-            lojas = resposta_lojas.get('resultado', [])
-            if not lojas:
-                self.mostrar_erro("Nenhuma loja disponível.")
-                self.pausar()
-                return
-            print("\nLojas disponíveis:")
-            for loja in lojas:
-                print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
-        else:
-            self.mostrar_erro("Erro ao listar lojas.")
-            self.pausar()
-            return
-        store_id = self.ler_texto("\nID da Loja a editar:")
-        if not store_id or not store_id.isdigit():
-            self.mostrar_erro("ID inválido.")
-            self.pausar()
-            return
-        self.mostrar_info("Deixe em branco para não alterar")
-        novo_nome = self.ler_texto("Novo Nome:")
-        nova_localizacao = self.ler_texto("Nova Localização:")
-        if not novo_nome and not nova_localizacao:
-            self.mostrar_aviso("Nenhuma alteração foi feita.")
-            self.pausar()
-            return
-        parametros = {**self.utilizador, 'store_id': store_id}
-        if novo_nome:
-            parametros['novo_nome'] = novo_nome
-        if nova_localizacao:
-            parametros['nova_localizacao'] = nova_localizacao
-        resposta = self.rede.enviar('editar_loja', parametros)
-        if resposta.get('ok'):
-            resultado = resposta.get('resultado', '')
-            if resultado == 'ATUALIZADO':
-                self.mostrar_sucesso("Loja atualizada!")
-            else:
-                self.mostrar_erro(f"{resultado}")
-        else:
-            self.mostrar_erro(resposta.get('erro', 'Erro ao editar loja'))
-        self.pausar()
-    
-    def _remover_loja(self):
-        if not self.utilizador:
-            return
-        self.mostrar_cabecalho("Remover Loja")
-        # Listar lojas
-        resposta_lojas = self.rede.enviar('listar_lojas')
-        if resposta_lojas.get('ok'):
-            lojas = resposta_lojas.get('resultado', [])
-            if not lojas:
-                self.mostrar_erro("Nenhuma loja disponível.")
-                self.pausar()
-                return
-            print("\nLojas disponíveis:")
-            for loja in lojas:
-                print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
-        else:
-            self.mostrar_erro("Erro ao listar lojas.")
-            self.pausar()
-            return
-        store_id = self.ler_texto("\nID da Loja a remover:")
-        if not store_id or not store_id.isdigit():
-            self.mostrar_erro("ID inválido.")
-            self.pausar()
-            return
-        confirmacao = self.ler_texto("Tem certeza? Esta ação não pode ser desfeita. (s/n):")
-        if confirmacao.lower() != 's':
-            self.mostrar_info("Operação cancelada.")
-            self.pausar()
-            return
-        parametros = {**self.utilizador, 'store_id': store_id}
-        resposta = self.rede.enviar('apagar_loja', parametros)
-        if resposta.get('ok'):
-            resultado = resposta.get('resultado', '')
-            if resultado == 'REMOVIDO':
-                self.mostrar_sucesso("Loja removida com sucesso!")
-            else:
-                if resultado == 'ERRO_PROCESSAMENTO':
-                    self.mostrar_erro("Não é possível remover: loja tem produtos ou vendedores associados")
-                else:
-                    self.mostrar_erro(f"{resultado}")
-        else:
-            self.mostrar_erro(resposta.get('erro', 'Erro ao remover loja'))
-        self.pausar()
-    
-    def _listar_utilizadores(self):
-        if not self.utilizador:
-            return
-        self.mostrar_cabecalho("Listar Utilizadores")
-        
-        # Menu de filtros
-        print("\nOpções de filtro:")
-        print("1. Todos os utilizadores")
-        print("2. Apenas Clientes")
-        print("3. Apenas Vendedores")
-        print("4. Apenas Admins")
-        print("5. Por Loja específica")
-        
-        opcao = self.ler_texto("\nEscolha uma opção (1-5):")
-        
-        filtro_cargo = None
-        filtro_loja = None
-        
-        if opcao == '2':
-            filtro_cargo = 'cliente'
-        elif opcao == '3':
-            filtro_cargo = 'vendedor'
-        elif opcao == '4':
-            filtro_cargo = 'admin'
-        elif opcao == '5':
-            # Listar lojas primeiro
-            resposta_lojas = self.rede.enviar('listar_lojas')
-            if resposta_lojas.get('ok'):
-                lojas = resposta_lojas.get('resultado', [])
-                if not lojas:
-                    self.mostrar_erro("Nenhuma loja disponível.")
-                    self.pausar()
-                    return
-                
-                print("\nLojas disponíveis:")
-                for loja in lojas:
-                    print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
-                
-                loja_id = self.ler_texto("\nID da Loja:")
-                if loja_id and loja_id.isdigit():
-                    filtro_loja = loja_id
-                else:
-                    self.mostrar_erro("ID inválido")
-                    self.pausar()
-                    return
-        elif opcao != '1':
-            self.mostrar_erro("Opção inválida")
-            self.pausar()
-            return
-        
-        # Fazer pedido ao servidor
-        parametros = {**self.utilizador}
-        if filtro_cargo:
-            parametros['filtro_cargo'] = filtro_cargo
-        if filtro_loja:
-            parametros['filtro_loja'] = filtro_loja
-        
-        resposta = self.rede.enviar('listar_utilizadores', parametros)
-        
+        parametros = self.sessao.obter_credenciais().copy()
+        resposta = self.rede.enviar_comando('listar_utilizadores', parametros)
+
         if resposta.get('ok'):
             utilizadores = resposta.get('resultado', [])
-            
-            if not utilizadores:
-                self.mostrar_info("Nenhum utilizador encontrado com os filtros aplicados.")
-            else:
-                print(f"\n{Cores.CIANO}{'ID':<5} | {'Username':<20} | {'Cargo':<12} | {'Loja':<25}{Cores.NORMAL}")
-                
-                for user in utilizadores:
-                    id_str = str(user['id'])
-                    username = user['username']
-                    cargo = user['cargo']
-                    loja = user.get('loja') or 'N/A'
-                    
-                    # Colorir por cargo
-                    if cargo == 'admin':
-                        cor = Cores.VERMELHO
-                    elif cargo == 'vendedor':
-                        cor = Cores.AMARELO
-                    else:
-                        cor = Cores.VERDE
-                    
-                    print(f"{cor}{id_str:<5} | {username:<20} | {cargo:<12} | {loja:<25}{Cores.NORMAL}")
-                
-                print(f"\n{Cores.CIANO}Total: {len(utilizadores)} utilizador(es){Cores.NORMAL}")
+
+            colunas = [
+                {'titulo': 'ID', 'chave': 'id', 'largura': 5},
+                {'titulo': 'Username', 'chave': 'username', 'largura': 20},
+                {'titulo': 'Cargo', 'chave': 'cargo', 'largura': 10},
+                {'titulo': 'Loja', 'chave': 'loja', 'largura': 20}
+            ]
+
+            tem = InterfaceUtilizador.mostrar_tabela(utilizadores, colunas)
+            if not tem:
+                return
         else:
-            self.mostrar_erro(resposta.get('erro', 'Erro ao listar utilizadores'))
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
+
+
+    def criar_loja(self):
+        InterfaceUtilizador.mostrar_cabecalho("Nova Loja")
+
+        nome = InterfaceUtilizador.ler_texto("Nome da Loja:")
+        localizacao = InterfaceUtilizador.ler_texto("Localização:")
+
+        parametros = self.sessao.obter_credenciais().copy()
+        parametros['nome'] = nome
+        parametros['localizacao'] = localizacao
+
+        resposta = self.rede.enviar_comando('criar_loja', parametros)
+        if InterfaceUtilizador.eh_sucesso_resposta(resposta, aceitos=['ADICIONADO']):
+            InterfaceUtilizador.mostrar_sucesso("Loja criada com sucesso!")
+        else:
+            InterfaceUtilizador.mostrar_erro(str(resposta.get('resultado') or resposta.get('erro')))
+
+
+    def editar_loja(self):
+        InterfaceUtilizador.mostrar_cabecalho("Editar Loja")
+
+        id_loja = InterfaceUtilizador.ler_texto("ID da Loja:")
+        novo_nome = InterfaceUtilizador.ler_texto("Novo Nome:")
+        nova_localizacao = InterfaceUtilizador.ler_texto("Nova Localização:")
+
+        parametros = self.sessao.obter_credenciais().copy()
+        parametros.update({'id_loja': id_loja, 'nome': novo_nome, 'localizacao': nova_localizacao})
+
+        resposta = self.rede.enviar_comando('editar_loja', parametros)
+
+        if resposta.get('ok'):
+            InterfaceUtilizador.mostrar_sucesso("Loja editada com sucesso!")
+        else:
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
+
+
+    def apagar_loja(self):
+        InterfaceUtilizador.mostrar_cabecalho("Apagar Loja")
+
+        id_loja = InterfaceUtilizador.ler_texto("ID da Loja:")
+
+        parametros = self.sessao.obter_credenciais().copy()
+        parametros['id_loja'] = id_loja
+
+        resposta = self.rede.enviar_comando('apagar_loja', parametros)
+
+        if resposta.get('ok'):
+            InterfaceUtilizador.mostrar_sucesso("Loja apagada com sucesso!")
+        else:
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
+
+
+    def adicionar_produto(self):
+        InterfaceUtilizador.mostrar_cabecalho("Novo Produto")
+
+        nome = InterfaceUtilizador.ler_texto("Nome:")
+        categoria = InterfaceUtilizador.ler_texto("Categoria:")
+        descricao = InterfaceUtilizador.ler_texto("Descrição:")
+        preco = InterfaceUtilizador.ler_texto("Preço:")
+        stock = InterfaceUtilizador.ler_texto("Stock:")
+        id_loja = InterfaceUtilizador.ler_texto("ID da Loja:")
+
+        parametros = self.sessao.obter_credenciais().copy()
+        parametros.update({
+            'nome': nome, 'categoria': categoria, 'descricao': descricao,
+            'preco': preco, 'stock': stock, 'store_id': id_loja
+        })
+
+        resposta = self.rede.enviar_comando('add_product', parametros)
+        if InterfaceUtilizador.eh_sucesso_resposta(resposta):
+            InterfaceUtilizador.mostrar_sucesso("Produto adicionado!")
+        else:
+            InterfaceUtilizador.mostrar_erro(str(resposta.get('resultado') or resposta.get('erro')))
+
+
+    def editar_produto(self):
+        InterfaceUtilizador.mostrar_cabecalho("Editar Produto")
+
+        id_produto = InterfaceUtilizador.ler_texto("ID do Produto:")
+        nome = InterfaceUtilizador.ler_texto("Novo Nome:")
+        categoria = InterfaceUtilizador.ler_texto("Nova Categoria:")
+        descricao = InterfaceUtilizador.ler_texto("Nova Descrição:")
+        preco = InterfaceUtilizador.ler_texto("Novo Preço:")
+        stock = InterfaceUtilizador.ler_texto("Novo Stock:")
+
+        parametros = self.sessao.obter_credenciais().copy()
+        parametros.update({
+            'id_produto': id_produto,
+            'nome': nome,
+            'categoria': categoria,
+            'descricao': descricao,
+            'preco': preco,
+            'stock': stock
+        })
+
+        resposta = self.rede.enviar_comando('editar_produto', parametros)
+        if InterfaceUtilizador.eh_sucesso_resposta(resposta):
+            InterfaceUtilizador.mostrar_sucesso("Produto editado com sucesso!")
+        else:
+            InterfaceUtilizador.mostrar_erro(str(resposta.get('resultado') or resposta.get('erro')))
+
+
+    def deletar_produto(self):
+        InterfaceUtilizador.mostrar_cabecalho("Deletar Produto")
+
+        id_produto = InterfaceUtilizador.ler_texto("ID do Produto:")
+
+        parametros = self.sessao.obter_credenciais().copy()
+        parametros['id_produto'] = id_produto
+
+        resposta = self.rede.enviar_comando('deletar_produto', parametros)
+        if InterfaceUtilizador.eh_sucesso_resposta(resposta):
+            InterfaceUtilizador.mostrar_sucesso("Produto deletado com sucesso!")
+        else:
+            InterfaceUtilizador.mostrar_erro(str(resposta.get('resultado') or resposta.get('erro')))
+
+
+    def criar_funcionario(self):
+        InterfaceUtilizador.mostrar_cabecalho("Criar Funcionário")
+
+        username = InterfaceUtilizador.ler_texto("Username:")
+        senha = InterfaceUtilizador.ler_senha("Senha:")
+        cargo = InterfaceUtilizador.ler_texto("Cargo:")
+
+        parametros = self.sessao.obter_credenciais().copy()
+        parametros.update({'username': username, 'password': senha, 'cargo': cargo})
+
+        resposta = self.rede.enviar_comando('criar_funcionario', parametros)
+        if InterfaceUtilizador.eh_sucesso_resposta(resposta):
+            InterfaceUtilizador.mostrar_sucesso("Funcionário criado com sucesso!")
+        else:
+            InterfaceUtilizador.mostrar_erro(str(resposta.get('resultado') or resposta.get('erro')))
+
+class ControladorVendedor:
+    def __init__(self, rede, sessao):
+        self.rede = rede
+        self.sessao = sessao
+
+    def listar_pedidos(self):
+        InterfaceUtilizador.mostrar_cabecalho("Pedidos")
+
+        parametros = self.sessao.obter_credenciais().copy()
+        resposta = self.rede.enviar_comando('listar_pedidos', parametros)
+
+        if resposta.get('ok'):
+            pedidos = resposta.get('resultado', [])
+
+            colunas = [
+                {'titulo': 'ID', 'chave': 'id', 'largura': 5},
+                {'titulo': 'Cliente', 'chave': 'cliente', 'largura': 20},
+                {'titulo': 'Total', 'chave': 'total', 'largura': 10},
+                {'titulo': 'Status', 'chave': 'status', 'largura': 15}
+            ]
+
+            tem = InterfaceUtilizador.mostrar_tabela(pedidos, colunas)
+            if not tem:
+                return
+        else:
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
+
+    def concluir_pedido(self):
+        InterfaceUtilizador.mostrar_cabecalho("Concluir Pedido")
+
+        id_pedido = InterfaceUtilizador.ler_texto("ID do Pedido:")
+        parametros = self.sessao.obter_credenciais().copy()
+        parametros['id_pedido'] = id_pedido
+
+        resposta = self.rede.enviar_comando('concluir_pedido', parametros)
+
+        if resposta.get('ok'):
+            InterfaceUtilizador.mostrar_sucesso("Pedido concluído com sucesso!")
+        else:
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
+
+    def verificar_stock_baixo(self):
+        InterfaceUtilizador.mostrar_cabecalho("Produtos com Stock Baixo")
+
+        parametros = self.sessao.obter_credenciais().copy()
+        resposta = self.rede.enviar_comando('verificar_stock_baixo', parametros)
+
+        if resposta.get('ok'):
+            produtos = resposta.get('resultado', [])
+
+            colunas = [
+                {'titulo': 'ID', 'chave': 'id', 'largura': 5},
+                {'titulo': 'Produto', 'chave': 'nome', 'largura': 20},
+                {'titulo': 'Stock', 'chave': 'stock', 'largura': 10}
+            ]
+
+            tem = InterfaceUtilizador.mostrar_tabela(produtos, colunas)
+            if not tem:
+                return
+        else:
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
+
+    def editar_produto(self):
+        InterfaceUtilizador.mostrar_cabecalho("Editar Produto")
+
+        id_produto = InterfaceUtilizador.ler_texto("ID do Produto:")
+        nome = InterfaceUtilizador.ler_texto("Novo Nome:")
+        categoria = InterfaceUtilizador.ler_texto("Nova Categoria:")
+        descricao = InterfaceUtilizador.ler_texto("Nova Descrição:")
+        preco = InterfaceUtilizador.ler_texto("Novo Preço:")
+        stock = InterfaceUtilizador.ler_texto("Novo Stock:")
+
+        parametros = self.sessao.obter_credenciais().copy()
+        parametros.update({
+            'id_produto': id_produto,
+            'nome': nome,
+            'categoria': categoria,
+            'descricao': descricao,
+            'preco': preco,
+            'stock': stock
+        })
+
+        resposta = self.rede.enviar_comando('editar_produto', parametros)
+
+        if resposta.get('ok'):
+            InterfaceUtilizador.mostrar_sucesso("Produto editado com sucesso!")
+        else:
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
+
+class AplicacaoCliente:
+    def __init__(self, host, porta, debug=False):
+        self.sessao = SessaoCliente()
+        self.rede = ClienteRede(host, porta, debug, sessao=self.sessao)
+        self.auth = ControladorAutenticacao(self.rede, self.sessao)
+        self.loja = ControladorLoja(self.rede, self.sessao)
+        self.admin = ControladorAdministracao(self.rede, self.sessao)
+        self.vendedor = ControladorVendedor(self.rede, self.sessao)
+
+    def verificar_conexao_inicial(self):
+        if not self.rede.testar_ping():
+            InterfaceUtilizador.mostrar_erro("O servidor não responde ao ping. Verifique o IP e a rede.")
+            return False
         
-        self.pausar()
+        resposta = self.rede.enviar_comando('ping')
+        if not resposta.get('ok'):
+            InterfaceUtilizador.mostrar_erro("O servidor recusou a conexão da aplicação.")
+            return False
+            
+        return True
 
-def run_Cliente(host='127.0.0.1', port=5000, debug = False):
-    global DEBUG
-    DEBUG = debug
+    def atualizar_permissoes(self):
+        credenciais = self.sessao.obter_credenciais()
+        cargo = None
+        if credenciais.get('username') and credenciais.get('password'):
+            resposta_auth = self.rede.enviar_comando('autenticar', credenciais)
+            if resposta_auth.get('ok'):
+                resultado = resposta_auth.get('resultado', {})
+                if isinstance(resultado, dict):
+                    cargo = resultado.get('cargo')
+                    self.sessao.cargo = cargo
+        resposta = self.rede.enviar_comando('help', credenciais)
+        if resposta.get('ok') and 'comandos' in resposta.get('resultado', {}):
+            comandos_agrupados = resposta['resultado']['comandos']
+            comandos_disponiveis = {}
+            for categoria, lista_cmds in comandos_agrupados.items():
+                for cmd in lista_cmds:
+                    nome = cmd.get('nome')
+                    mensagens_sucesso = cmd.get('mensagens_sucesso', [])
+                    comandos_disponiveis[nome] = {
+                        'categoria': categoria,
+                        'mensagens_sucesso': mensagens_sucesso
+                    }
+            self.sessao.comandos_disponiveis = comandos_disponiveis
+        else:
+            self.sessao.comandos_disponiveis = {}
+
+    def _executar_comando_generico(self, comando):
+        """Executa um comando simples no servidor passando as credenciais atuais."""
+        parametros = self.sessao.obter_credenciais().copy()
+        resposta = self.rede.enviar_comando(comando, parametros)
+        if resposta.get('ok'):
+            resultado = resposta.get('resultado')
+            # valida resposta usando mapeamento de sucessos esperados
+            aceitos = COMMAND_SUCCESS.get(comando)
+            # Se o resultado for um payload (lista/dict) mostra como info para o utilizador
+            if isinstance(resultado, (dict, list)):
+                InterfaceUtilizador.mostrar_info(str(resultado))
+            else:
+                if InterfaceUtilizador.eh_sucesso_resposta(resposta, aceitos=aceitos):
+                    InterfaceUtilizador.mostrar_sucesso(str(resultado))
+                else:
+                    InterfaceUtilizador.mostrar_aviso(str(resultado))
+        else:
+            InterfaceUtilizador.mostrar_erro(resposta.get('erro'))
+
+    def menu_inicial(self):
+        opcoes = [
+            ("Login", self.auth.fazer_login),
+            ("registrar Conta", self.auth.registrar_conta)
+        ]
+        InterfaceUtilizador.exibir_menu("Sistema de Vendas", opcoes, sair_texto="Sair")
+
+    def menu_principal(self):
+        if not self.sessao.esta_logado():
+            return
+
+        if self.sessao.utilizador_atual is not None:
+            utilizador = self.sessao.utilizador_atual.get('username', 'Desconhecido')
+        else:
+            utilizador = 'Desconhecido'
+
+        if self.sessao.cargo is not None:
+            cargo = self.sessao.cargo
+        else:
+            cargo = 'Desconhecido'
+
+        titulo = f"Menu Principal - {utilizador} [{cargo}]"
+        # Construir menu por categorias (sub-menus) com comandos disponíveis
+        opcoes_menu = []
+        comandos = self.sessao.comandos_disponiveis or {}
+
+        # Mapeamento de comandos conhecidos para funções locais
+        mapa_comandos = {
+            'ping': (lambda: self._executar_comando_generico('ping')),
+            'help': (lambda: self._executar_comando_generico('help')),
+            'autenticar': self.auth.fazer_login,
+            'registrar': self.auth.registrar_conta,
+            'list_products': self.loja.listar_produtos,
+            'realizar_venda': self.loja.realizar_compra,
+            'ver_meu_historico': self.loja.ver_meu_historico,
+            'buscar_produto_por_nome': self.loja.buscar_produto_por_nome,
+            'listar_lojas': self.loja.listar_lojas,
+            'editar_senha': self.auth.alterar_senha,
+            'editar_username': self.auth.editar_username,
+            'apagar_utilizador': self.auth.apagar_utilizador,
+            'promover_para_admin': self.auth.promover_para_admin,
+            # vendedor/admin mappings
+            'listar_pedidos': self.vendedor.listar_pedidos,
+            'concluir_pedido': self.vendedor.concluir_pedido,
+            'verificar_stock_baixo': self.vendedor.verificar_stock_baixo,
+            'criar_loja': self.admin.criar_loja,
+            'editar_loja': self.admin.editar_loja,
+            'apagar_loja': self.admin.apagar_loja,
+            'criar_funcionario': self.admin.criar_funcionario,
+            'listar_utilizadores': self.admin.listar_utilizadores,
+            'add_product': self.admin.adicionar_produto,
+            'editar_produto': self.admin.editar_produto,
+            'deletar_produto': self.admin.deletar_produto,
+            'listar_categorias': (lambda: self._executar_comando_generico('listar_categorias')),
+            'listar_nomes_produtos': (lambda: self._executar_comando_generico('listar_nomes_produtos')),
+            'listar_descricoes': (lambda: self._executar_comando_generico('listar_descricoes')),
+            # fallback: outros comandos serão executados genericamente
+        }
+
+        # Para cada categoria, criar submenu (exceto autenticação)
+        for categoria, lista_cmds in comandos.items():
+            if categoria.lower() == 'autenticacao':
+                continue
+
+            nome_categoria = categoria.capitalize()
+            opcoes_da_categoria = []
+            for cmd in lista_cmds:
+                func_local = mapa_comandos.get(cmd)
+                if func_local:
+                    opcoes_da_categoria.append((cmd, func_local))
+                else:
+                    opcoes_da_categoria.append((cmd, (lambda c=cmd: self._executar_comando_generico(c))))
+
+            if opcoes_da_categoria:
+                def criar_submenu(opcoes, title):
+                    def abrir_submenu():
+                        InterfaceUtilizador.exibir_menu(title, opcoes, sair_texto="Voltar")
+                    return abrir_submenu
+                opcoes_menu.append((nome_categoria, criar_submenu(opcoes_da_categoria, nome_categoria)))
+
+        # Sempre adicionar utilitários locais essenciais
+        def abrir_utilitarios():
+            InterfaceUtilizador.exibir_menu('Utilitários', [
+                ('Alterar Senha', self.auth.alterar_senha),
+                ('Editar Username', self.auth.editar_username),
+                ('Apagar Conta', self.auth.apagar_utilizador)
+            ], sair_texto='Voltar')
+        
+        opcoes_menu.append(('Utilitários', abrir_utilitarios))
+
+        # Terminar Sessão como opção final
+        opcoes_menu.append(('Terminar Sessão', self.auth.terminar_sessao))
+        
+        InterfaceUtilizador.exibir_menu(titulo, opcoes_menu, sair_texto="Sair da Aplicação")
+
+
+    def iniciar(self):
+        InterfaceUtilizador.limpar()
+        InterfaceUtilizador.mostrar_info("A conectar ao servidor...")
+        
+        # Tentativa de reconexão simples
+        tentativas = 0
+        conectado = False
+        while tentativas < 2:
+            if self.verificar_conexao_inicial():
+                conectado = True
+                break
+            
+            InterfaceUtilizador.mostrar_aviso("A tentar reconectar em 3 segundos...")
+            time.sleep(3)
+            tentativas += 1
+        
+        if not conectado:
+            InterfaceUtilizador.mostrar_erro("Falha crítica de conexão. O programa será encerrado.")
+            return
+
+        # Loop principal da aplicação
+        while True:
+            self.atualizar_permissoes()
+            
+            if not self.sessao.esta_logado():
+                self.menu_inicial()
+            else:
+                self.menu_principal()
+
+def run(host='127.0.0.1', port=5000, debug=False):
+    app = AplicacaoCliente(host, port, debug)
     try:
-        app = ClienteVendas(host, port)
         app.iniciar()
-    except (KeyboardInterrupt, EOFError):
-        print(f"\n\n{Cores.ROXO}Programa encerrado pelo utilizador.{Cores.NORMAL}")
-    except Exception as e:
-        print(f"{Cores.VERMELHO}{Cores.NEGRITO}Erro fatal: {e}{Cores.NORMAL}")
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    except Exception as erro:
+        print(f"\n{Cores.VERMELHO}Erro fatal no cliente: {erro}{Cores.NORMAL}")
 
-def run(host='127.0.0.1', port=5000, debug = False):
-    run_Cliente(host, port, debug)
-    
-if __name__ == '__main__': # Quando executado diretamente
-    run_Cliente(host='127.0.0.1', port=5000)
-
+if __name__ == '__main__':
+    run()

@@ -18,6 +18,7 @@ class Cores(Enum):
         return self.value
     
 class Mensagem(Enum):
+    PONG = 0
     SUCESSO = 1
     ERRO_GENERICO = 2
     UTILIZADOR_CRIADO = 4

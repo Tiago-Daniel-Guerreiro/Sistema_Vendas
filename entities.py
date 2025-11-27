@@ -1,3 +1,129 @@
+import secrets
+
+import hashlib
+import datetime
+
+
+class Sessao:
+    @staticmethod
+    def obter_utilizador(bd, parametros):
+        """
+        Retorna o objeto de usuário autenticado via token de sessão ou credenciais.
+        Se token válido, retorna usuário correspondente.
+        Se username/senha, retorna usuário autenticado.
+        Caso contrário, retorna None.
+        """
+        from entities import Admin, Vendedor, Cliente, User
+        token = parametros.get('token_sessao')
+        username = parametros.get('username')
+        password = parametros.get('password')
+        # Autenticação por token
+        if token:
+            sql = "SELECT username FROM sessoes WHERE token = %s"
+            bd.cursor.execute(sql, (token,))
+            resultado = bd.cursor.fetchone()
+            if resultado and Sessao.validar_token(bd, token):
+                username_token = resultado['username']
+                # Busca usuário pelo username
+                bd.cursor.execute("SELECT id, cargo FROM users WHERE username = %s", (username_token,))
+                user_row = bd.cursor.fetchone()
+                if user_row:
+                    cargo = user_row['cargo']
+                    match cargo:
+                        case 'admin':
+                            return Admin(user_row['id'], bd)
+                        case 'vendedor':
+                            return Vendedor(user_row['id'], bd)
+                        case 'cliente':
+                            return Cliente(user_row['id'], bd)
+        # Autenticação por username/senha
+        if username and password:
+            return User.login(bd, username, password)
+        return None
+    def __init__(self, bd, token=None):
+        self.bd = bd
+        self.token = token
+        self.username = None
+        self.password = None
+        self.data_criacao = None
+        if token:
+            self._carregar()
+
+    @staticmethod
+    def gerar_token():
+        return secrets.token_hex(32) # 64 Caracteres = 32 bytes em hexadecimal
+
+    @staticmethod
+    def criar(bd, username, password):
+        """
+        Cria ou reutiliza um token de sessão para o usuário.
+        Se já existe e está válido e não próximo do vencimento, retorna o existente.
+        Se está próximo do vencimento (<1/4 do tempo restante), cria novo.
+        """
+        # Verifica se já existe sessão válida
+        sql = "SELECT token, data_criacao FROM sessoes WHERE username = %s ORDER BY data_criacao DESC LIMIT 1"
+        bd.cursor.execute(sql, (username,))
+        resultado = bd.cursor.fetchone()
+        agora = datetime.datetime.now()
+        LIMITE_SEGUNDOS = 86400
+        if resultado:
+            token = resultado['token']
+            data_criacao = resultado['data_criacao']
+            if isinstance(data_criacao, str):
+                data_criacao = datetime.datetime.fromisoformat(data_criacao)
+            delta = agora - data_criacao
+            restante = LIMITE_SEGUNDOS - delta.total_seconds()
+            # Se ainda válido e não está perto do prazo (mais de 1/4 do tempo restante)
+            if restante > LIMITE_SEGUNDOS / 4:
+                return Sessao(bd, token)
+        # Cria novo token
+        token = Sessao.gerar_token()
+        sql = "INSERT INTO sessoes (token, username, password, data_criacao) VALUES (%s, %s, %s, NOW())"
+        bd.cursor.execute(sql, (token, username, password))
+        bd.conn.commit()
+        return Sessao(bd, token)
+
+    def _carregar(self):
+        sql = "SELECT * FROM sessoes WHERE token = %s"
+        self.bd.cursor.execute(sql, (self.token,))
+        resultado = self.bd.cursor.fetchone()
+        if resultado:
+            self.username = resultado['username']
+            self.password = resultado['password']
+            self.data_criacao = resultado['data_criacao']
+
+    def obter_credenciais(self):
+        return {'token': self.token, 'username': self.username}
+
+    def encerrar(self):
+        sql = "DELETE FROM sessoes WHERE token = %s"
+        self.bd.cursor.execute(sql, (self.token,))
+        self.bd.conn.commit()
+        self.token = None
+        self.username = None
+        self.password = None
+        self.data_criacao = None
+
+    @staticmethod
+    def validar_token(bd, token):
+        sql = "SELECT data_criacao FROM sessoes WHERE token = %s"
+        bd.cursor.execute(sql, (token,))
+        resultado = bd.cursor.fetchone()
+        if not resultado:
+            return False
+        data_criacao = resultado['data_criacao']
+        agora = datetime.datetime.now()
+        if isinstance(data_criacao, str):
+            data_criacao = datetime.datetime.fromisoformat(data_criacao)
+        delta = agora - data_criacao
+        return delta.total_seconds() < 86400
+
+    @staticmethod
+    def remover_expiradas(bd):
+        sql = "DELETE FROM sessoes WHERE data_criacao < (NOW() - INTERVAL 1 DAY)"
+        bd.cursor.execute(sql)
+        bd.conn.commit()
+
 from enums import Mensagem
 
 class Produto:
@@ -34,7 +160,7 @@ class Produto:
             return Mensagem.ERRO_DUPLICADO
 
     @staticmethod
-    def listar_todos(bd, store_id=None, filtros_extras=None):
+    def listar_todos(bd, store_id=None, filtros=None):
         # CORREÇÃO SQL INJECTION: Usar parametros bindados
         sql = """
             SELECT products.id, product_names.nome, categories.nome as categoria, descriptions.texto as descricao, products.preco, products.stock, stores.nome as loja
@@ -53,13 +179,13 @@ class Produto:
             parametoetos.append(store_id)
             
         # Exemplo de filtros extras (dicionário)
-        if filtros_extras:
-            if 'categoria' in filtros_extras:
+        if filtros:
+            if 'categoria' in filtros:
                 clauses.append("categories.nome = %s")
-                parametoetos.append(filtros_extras['categoria'])
-            if 'preco_max' in filtros_extras:
+                parametoetos.append(filtros['categoria'])
+            if 'preco_max' in filtros:
                 clauses.append("products.preco <= %s")
-                parametoetos.append(filtros_extras['preco_max'])
+                parametoetos.append(filtros['preco_max'])
 
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
@@ -172,6 +298,19 @@ class Produto:
         for row in bd.cursor.fetchall():
             descricoes.append(row['texto'])
         return descricoes
+    @staticmethod
+    def obter_id_pelo_nome_e_loja(bd, nome_produto, id_loja):
+        sql = """
+            SELECT products.id
+            FROM products
+            JOIN product_names ON products.product_name_id = product_names.id
+            WHERE product_names.nome = %s AND products.store_id = %s
+        """
+        bd.cursor.execute(sql, (nome_produto, id_loja))
+        resultado = bd.cursor.fetchone()
+        if resultado:
+            return resultado['id']
+        return None
     
 # Utilizadores
 class User:
@@ -269,7 +408,7 @@ class User:
         
 class Cliente(User):                    
     @staticmethod
-    def registar(bd, username, password):
+    def registrar(bd, username, password):
         try:
             # Clientes não têm loja associada, logo store_id é NULL
             sql = "INSERT INTO users (username, password, cargo) VALUES (%s, %s, 'cliente')"
@@ -365,10 +504,19 @@ class Cliente(User):
             resultado['order_date'] = str(resultado['order_date'])
 
         return resultado
+    
+    def editar_senha(self, nova_senha):
+        try:
+            self.bd.cursor.execute("UPDATE users SET password = %s WHERE id = %s", (nova_senha, self.id))
+            self.bd.conn.commit()
+            return Mensagem.ATUALIZADO
+        except Exception:
+            self.bd.conn.rollback()
+            return Mensagem.ERRO_GENERICO
 
 class Vendedor(Cliente):                  
     @staticmethod
-    def registar(bd, username, password, store_id):
+    def registrar(bd, username, password, store_id):
         if Vendedor.verificar_loja_valida(bd, store_id) is False:
             return Mensagem.LOJA_NAO_ENCONTRADA                    
 
@@ -453,6 +601,14 @@ class Vendedor(Cliente):
             return resultado
         except Exception:
             return []
+        def editar_senha(self, nova_senha):
+            try:
+                self.bd.cursor.execute("UPDATE users SET password = %s WHERE id = %s", (nova_senha, self.id))
+                self.bd.conn.commit()
+                return Mensagem.ATUALIZADO
+            except Exception:
+                self.bd.conn.rollback()
+                return Mensagem.ERRO_GENERICO
         
     def _verificar_pedido_permissao_vendedor(self, id_alvo, verificar_pedido_status=False):
         # Verifica se é produto ou pedido para saber qual tabela consultar
@@ -482,8 +638,6 @@ class Vendedor(Cliente):
         bd.cursor.execute("SELECT id FROM stores WHERE id=%s", (store_id,))
         resultado = bd.cursor.fetchone()
         return resultado is not None
-        
-
 
 class Admin(Vendedor):
     def deletar_pedido(self, order_id):
@@ -557,6 +711,14 @@ class Admin(Vendedor):
         except:
             self.bd.conn.rollback()
             return Mensagem.ERRO_GENERICO
+        def editar_senha(self, nova_senha):
+            try:
+                self.bd.cursor.execute("UPDATE users SET password = %s WHERE id = %s", (nova_senha, self.id))
+                self.bd.conn.commit()
+                return Mensagem.ATUALIZADO
+            except Exception:
+                self.bd.conn.rollback()
+                return Mensagem.ERRO_GENERICO
 
     def apagar_loja(self, store_id):
         try:
@@ -621,3 +783,14 @@ class Admin(Vendedor):
         except Exception as e:
             print(f"Erro ao listar utilizadores: {e}")
             return []
+    
+    @staticmethod
+    def registrar(bd, username, password, store_id=None):
+        try:
+            # Admin NÃO deve validar nem associar loja
+            sql = "INSERT INTO users (username, password, cargo, store_id) VALUES (%s, %s, 'admin', NULL)"
+            bd.cursor.execute(sql, (username, password))
+            bd.conn.commit()
+            return Mensagem.UTILIZADOR_CRIADO
+        except:
+            return Mensagem.UTILIZADOR_JA_EXISTE

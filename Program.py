@@ -1,184 +1,206 @@
-# Mensagem informativa sobre problemas de rede na escola
-print("\nATENÇÃO: Caso estejam a testar na escola onde o projeto foi desenvolvido, e um computador cliente não se consiga comunicar com o computador servidor, foi identificado um problema relacionado à rede. A solução é colocar o servidor em outro computador.\n")
-
 import subprocess
 import sys
 import socket
 from enums import Cores
-
-def limpar_tela():
-    import os
-    os.system('cls')
-
-def pausar():
-    input("Pressione ENTER para continuar...")
+from console import *
 
 def obter_ip_local():
+    # Usa UDP (SOCK_DGRAM) para obter o IP local sem fazer uma ligação TC (que é mais complexo).
+    # A chamada connect em UDP não envia pacotes, apenas define o endereço remoto para que getsockname() retorne o ip.
+    socket_temporario = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    socket_temporario.settimeout(2.0)
+    endereco_google_dns = ("8.8.8.8", 80) # Usado apenas para obter o IP local
     try:
-        # Cria socket temporário para descobrir IP
-        socket_temporario = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        socket_temporario.connect(("8.8.8.8", 80))
-        ip = socket_temporario.getsockname()[0]
-        socket_temporario.close()
-        return ip
-    except:
+        socket_temporario.connect(endereco_google_dns)
+        endereco_ip = socket_temporario.getsockname()[0]
+    except Exception:
         return "127.0.0.1"
+    finally:
+        socket_temporario.close()
 
-def verificar_instalar_dependencias():
-    print(f"{Cores.AMARELO}Verificando dependências do servidor...{Cores.NORMAL}\n")
+    return endereco_ip
+
+def instalar_pacote(nome_pacote):
+    print(f"A instalar {nome_pacote}...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", nome_pacote])
+        sucesso(f"{nome_pacote} instalado com sucesso!\n")
+        return True
+    except subprocess.CalledProcessError:
+        erro(f"Erro ao instalar {nome_pacote}.\n")
+        return False
+
+def verificar_e_instalar_dependencias():
+    aviso("A verificar dependências do servidor...\n")
     
-    dependencias = [
-        ("pywin32", "win32api"),
-        ("mysql-connector-python", "mysql.connector")
+    # Estrutura: (Nome no PIP, Nome no Import, Obrigatória?)
+    # True = Obrigatória (Se faltar, para tudo)
+    # False = Opcional (Se faltar, pergunta, mas pode continuar sem)
+    lista_dependencias = [
+        ("mysql-connector-python", "mysql.connector", True),
+        ("pywin32", "win32api", False)
     ]
     
-    faltando = []
+    faltam_obrigatorias = []
+    faltam_opcionais = []
     
-    for pacote_pip, nome_import in dependencias:
+    # Verificação do que está instalado
+    for nome_pip, nome_import, obrigatoria in lista_dependencias:
         try:
             __import__(nome_import)
-            print(f"{Cores.VERDE}Instalado: {pacote_pip} instalado{Cores.NORMAL}")
+            sucesso(f"Instalado: {nome_pip}")
         except ImportError:
-            print(f"{Cores.VERMELHO}Em Falta: {pacote_pip} não encontrado{Cores.NORMAL}")
-            faltando.append(pacote_pip)
+            if obrigatoria is True:
+                erro(f"Em Falta (Essencial): {nome_pip}")
+                faltam_obrigatorias.append(nome_pip)
+            else:
+                aviso(f"Em Falta (Opcional): {nome_pip}")
+                faltam_opcionais.append(nome_pip)
     
-    if faltando:
-        print(f"\n{Cores.AMARELO}Dependências faltando: {', '.join(faltando)}{Cores.NORMAL}")
-        resposta = input(f"\n{Cores.CIANO}Deseja instalar automaticamente? (s/n): {Cores.NORMAL}").strip().lower()
-        
-        if resposta == 's':
-            print(f"\n{Cores.AMARELO}Instalando dependências...{Cores.NORMAL}\n")
-            for pacote in faltando:
-                print(f"Instalando {pacote}...")
-                try:
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", pacote])
-                    print(f"{Cores.VERDE}{pacote} instalado com sucesso!{Cores.NORMAL}\n")
-                except subprocess.CalledProcessError:
-                    print(f"{Cores.VERMELHO}Erro ao instalar {pacote}{Cores.NORMAL}\n")
-                    return False
-            
-            print(f"{Cores.VERDE}Todas as dependências foram instaladas!{Cores.NORMAL}\n")
-            pausar()
-            return True
-        else:
-            print(f"{Cores.VERMELHO}Não é possível iniciar o servidor sem as dependências.{Cores.NORMAL}")
-            pausar()
-            return False
-    else:
-        print(f"\n{Cores.VERDE}Todas as dependências estão instaladas!{Cores.NORMAL}\n")
+    # Se não falta nada, sucesso imediato
+    if len(faltam_obrigatorias) == 0 and len(faltam_opcionais) == 0:
+        sucesso("\nTodas as dependências estão instaladas!\n")
         pausar()
         return True
 
-def iniciar_servidor(debug=False):
-    limpar_tela()
-    print(f"{Cores.CIANO}{Cores.NEGRITO}{'A inicializar Servidor'}{Cores.NORMAL}\n")
-    
-    # Verificar e instalar dependências
-    if not verificar_instalar_dependencias():
-        return
-    
-    limpar_tela()
-    print(f"{Cores.CIANO}{Cores.NEGRITO}{'Servidor - Sistema de Vendas'}{Cores.NORMAL}\n")
-    
-    ip_local = obter_ip_local()
-    print(f"{Cores.VERDE}Ip Local da Máquina: {ip_local}{Cores.NORMAL}")
-    print(f"{Cores.AMARELO}O servidor será iniciado em: {ip_local}:5000{Cores.NORMAL}\n")
-    
-    resposta = input(f"{Cores.CIANO}Deseja usar este IP? (s/n): {Cores.NORMAL}").strip().lower()
-    
-    if resposta == 'n':
-        host = input(f"{Cores.CIANO}Digite o IP desejado (ou ENTER para 127.0.0.1): {Cores.NORMAL}").strip()
-        if not host:
-            host = "127.0.0.1"
-    else:
-        host = ip_local
-
-    port_input = input(f"{Cores.CIANO}Digite a port (ou ENTER para 5000): {Cores.NORMAL}").strip()
-    if port_input:
-        port = int(port_input)
-    else:
-        port = 5000
-
-
-    print(f"\n{Cores.VERDE}Iniciando servidor em {host}:{port}...{Cores.NORMAL}\n")
-    
-    try:
-        import server
-        server.run(host,port,debug)
-    except (KeyboardInterrupt, EOFError):
-            print(f"\n\n{Cores.ROXO}Servidor encerrado pelo utilizador.{Cores.NORMAL}")
-    except Exception as e:
-        print(f"\n{Cores.VERMELHO}Erro ao iniciar servidor: {e}{Cores.NORMAL}")
-        input("\nPressione ENTER para voltar ao menu...")
-
-def iniciar_cliente(debug=False):
-    limpar_tela()
-    print(f"{Cores.CIANO}{Cores.NEGRITO}{'Cliente - Sistema de Vendas'}{Cores.NORMAL}\n")
-    
-    print(f"{Cores.AMARELO}Configure a conexão com o servidor:{Cores.NORMAL}\n")
-    
-    host = input(f"{Cores.CIANO}Ip do Servidor (ou ENTER para 127.0.0.1): {Cores.NORMAL}").strip()
-    if not host:
-        host = "127.0.0.1"
-    
-    port_input = input(f"{Cores.CIANO}port do Servidor (ou ENTER para 5000): {Cores.NORMAL}").strip()
-    if port_input:
-        port = int(port_input) 
-    else:
-        port = 5000
-    
-    print(f"\n{Cores.VERDE}Conectando ao servidor {host}:{port}...{Cores.NORMAL}\n")
-    
-    try:
-        import client
-        client.run(host, port, debug)
-    except (KeyboardInterrupt, EOFError):
-            print(f"\n\n{Cores.ROXO}Cliente encerrado pelo utilizador.{Cores.NORMAL}")
-    except Exception as e:
-        print(f"\n{Cores.VERMELHO}Erro ao iniciar cliente: {e}{Cores.NORMAL}")
-        input("\nPressione ENTER para voltar ao menu...")
-def mostrar_bool(valor):
-    if valor == True:
-        return f"{Cores.VERDE}True{Cores.NORMAL}"
-    
-    return f"{Cores.VERMELHO}False{Cores.NORMAL}"
-def menu_principal():
-    debug = False
-    while True:
-        limpar_tela()
-        print(f"{Cores.CIANO}{Cores.NEGRITO}Sistema de Vendas - Inicializador - Debug = {mostrar_bool(debug)}\n")
-        print(f"{Cores.AMARELO}Escolha uma opção:{Cores.NORMAL}\n")
-        print(f"  {Cores.VERDE}1){Cores.NORMAL} Iniciar {Cores.LARANJA}Servidor{Cores.NORMAL}")
-        print(f"  {Cores.VERDE}2){Cores.NORMAL} Iniciar {Cores.CASTANHO}Cliente{Cores.NORMAL}")
-        print(f"  {Cores.AMARELO}3){Cores.NORMAL} Mudar {Cores.AMARELO}DEBUG{Cores.NORMAL} para {mostrar_bool(not debug)}")
-        print(f"  {Cores.VERMELHO}0){Cores.NORMAL} Sair\n")
+    # Para as obrigatórias
+    if len(faltam_obrigatorias) > 0:
+        erro(f"\nDependências obrigatórias em falta: {', '.join(faltam_obrigatorias)}")
+        resposta = input(f"{Cores.CIANO}Instalar agora? (s/n): {Cores.NORMAL}").strip().lower()
         
-        opcao = input(f"{Cores.CIANO}Escolha uma opção: {Cores.NORMAL}").strip()
+        if resposta != 's':
+            erro("Cancelado. Não é possível iniciar sem as dependências obrigatórias.")
+            pausar()
+            return False
+            
+        aviso("\nA instalar...")
+        for pacote in faltam_obrigatorias:
+            if instalar_pacote(pacote) is False:
+                return False
+
+    # Para as opcionais
+    if len(faltam_opcionais) > 0:
+        aviso(f"\nDependências opcionais em falta: {', '.join(faltam_opcionais)}")
+        print(f"{Cores.CINZA}Se não instalar, algumas funções específicas serão desativadas.{Cores.NORMAL}")
+        resposta = input(f"{Cores.CIANO}Instalar agora? (s/n): {Cores.NORMAL}").strip().lower()
+        
+        if resposta == 's':
+            aviso("\nA instalar...")
+            for pacote in faltam_opcionais:
+                instalar_pacote(pacote)
+        else:
+            aviso("\nContinuando sem dependências opcionais...")
+
+    sucesso("\nVerificação finalizada. A iniciar...\n")
+    pausar()
+    
+    return True
+    
+def iniciar_sessao(servidor=False, modo_debug=False):
+    if servidor is True:
+        tipo = "servidor"
+        modulo = "server"
+    else:
+        tipo = "cliente"
+        modulo = "client"
+
+    limpar()
+    print(f"{Cores.CIANO}{Cores.NEGRITO}A inicializar {tipo}{Cores.NORMAL}\n")
+    
+    if servidor is True:
+        if verificar_e_instalar_dependencias() is False:
+            return
+            
+        limpar()
+        print(f"{Cores.CIANO}{Cores.NEGRITO}Configuração do Servidor{Cores.NORMAL}\n")
+
+    importante_destacado("Configuração de Rede:\n")
+
+    host = "127.0.0.1"
+    porta = 5000
+    porta_ja_definida = False
+
+    if servidor is True:
+        ip_local = obter_ip_local()
+        sucesso(f"Ip Local detectado: {ip_local}")
+        
+        resposta_ip = input(f"{Cores.CIANO}Deseja usar este Ip? (s/n - Enter para S): {Cores.NORMAL}").strip().lower()
+        
+        # Se a resposta for vazia ou 's', usa o IP local
+        # Se for 'n' ou qualquer outro valor, pede um novo IP
+        if resposta_ip == '' or resposta_ip == 's':
+            host = ip_local
+        else:
+            entrada_host = input(f"{Cores.CIANO}Introduza o Ip desejado (Enter para 127.0.0.1): {Cores.NORMAL}").strip()
+            if len(entrada_host) > 0:
+                host = entrada_host
+            
+    else:
+        entrada_host = input(f"{Cores.CIANO}Ip do Servidor (Enter para 127.0.0.1): {Cores.NORMAL}").strip()
+        if len(entrada_host) > 0:
+            host = entrada_host
+
+    partes = host.split(":")
+    host = partes[0]
+    # A pessoa pode colocar a porta diretamente no ip
+    if len(partes) == 2 and partes[1].isdigit():
+        porta = int(partes[1])
+        porta_ja_definida = True
+        
+    if porta_ja_definida is False:
+        entrada_porta = input(f"{Cores.CIANO}Porta (Enter para 5000): {Cores.NORMAL}").strip()
+        if len(entrada_porta) > 0:
+            if entrada_porta.isdigit():
+                porta = int(entrada_porta)
+            else:
+                erro("Porta inválida, usando 5000.")
+
+    if servidor is True:
+        verbo = "A iniciar servidor"
+    else:
+        verbo = "A conectar ao servidor"
+        
+    sucesso(f"\n{verbo} em {host}:{porta}...")
+    pausar()
+    
+    try:
+        # Faz a importação de forma dinamica para não causar erros por falta de bibliotecas
+        modulo_importado = __import__(modulo)
+        modulo_importado.run(host, porta, modo_debug)
+    except (KeyboardInterrupt, EOFError):
+        pass
+    except Exception as excecao:
+        erro(f"\nErro ao iniciar {tipo}: {excecao}")
+        pausar()
+
+def menu_principal():
+    mostrar_mensagem_rede_escola()
+    modo_debug = False
+    
+    while True:
+        pausar()
+        limpar()
+        print(f"{Cores.CIANO}{Cores.NEGRITO}Sistema de Vendas - Menu de Arranque{Cores.NORMAL}")        
+        print(f"{Cores.VERDE}1){Cores.NORMAL} Iniciar {Cores.LARANJA}Servidor{Cores.NORMAL}")
+        print(f"{Cores.VERDE}2){Cores.NORMAL} Iniciar {Cores.CASTANHO}Cliente{Cores.NORMAL}")
+        print(f"{Cores.AMARELO}3){Cores.NORMAL} Alterar Debug: {formatar_estado_debug(modo_debug)}")
+        print(f"{Cores.VERMELHO}0){Cores.NORMAL} Sair\n")
+        
+        opcao = input(f"{Cores.CIANO}Opção: {Cores.NORMAL}").strip()
 
         match opcao:
             case '1':
-                iniciar_servidor(debug)
+                iniciar_sessao(True, modo_debug)
             case '2':
-                iniciar_cliente(debug)
+                iniciar_sessao(False, modo_debug)
             case '3':
-                debug = not debug
+                modo_debug = not modo_debug
             case '0':
-                limpar_tela()
-                print(f"{Cores.VERDE}Obrigado por usar o Sistema de Vendas!{Cores.NORMAL}\n")
+                limpar()
+                sucesso("Obrigado por usar o Sistema de Vendas!\n")
                 break
             case _:
-                print(f"{Cores.VERMELHO}Opção inválida!{Cores.NORMAL}")
-                input("Pressione ENTER para continuar...")
+                erro("Opção inválida!")
 
 if __name__ == '__main__':
-    try:
-        menu_principal()
-    except (KeyboardInterrupt, EOFError):
-        print(f"\n\n{Cores.ROXO}Programa encerrado pelo utilizador.{Cores.NORMAL}")
-    except SystemExit as e: # Quando usa exit
-        if e.code == 0:
-            print(f"\n{Cores.VERDE}Programa encerrado com sucesso.{Cores.NORMAL}")
-        else:
-            print(f"\n{Cores.VERMELHO}Programa encerrado com erro.{Cores.NORMAL}")
-    except Exception as e:
-        print(f"\n{Cores.VERMELHO}{Cores.NEGRITO}Erro fatal: {e}{Cores.NORMAL}")
+    menu_principal()

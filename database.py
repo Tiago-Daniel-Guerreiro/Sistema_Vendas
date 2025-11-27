@@ -55,66 +55,67 @@ class DatabaseManager:
             "CREATE TABLE IF NOT EXISTS product_names (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(100) UNIQUE)",
             "CREATE TABLE IF NOT EXISTS descriptions (id INT AUTO_INCREMENT PRIMARY KEY, texto TEXT)",
             "CREATE TABLE IF NOT EXISTS stores (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(50) UNIQUE, localizacao VARCHAR(100))",
-            
             # Utilizadores
             """CREATE TABLE IF NOT EXISTS users (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            username VARCHAR(50) UNIQUE,
-            password VARCHAR(255),
-            cargo ENUM('admin', 'vendedor', 'cliente'),
-            store_id INT NULL,
-            FOREIGN KEY (store_id) REFERENCES stores(id)
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(50) UNIQUE,
+                password VARCHAR(255),
+                cargo ENUM('admin', 'vendedor', 'cliente'),
+                store_id INT NULL,
+                FOREIGN KEY (store_id) REFERENCES stores(id)
             )""",
-            
-            # Produtos (Não pode haver 2 nomes iguais na mesma loja)
+            # SESSÕES
+            """CREATE TABLE IF NOT EXISTS sessoes (
+                token CHAR(64) PRIMARY KEY,
+                username VARCHAR(50),
+                password VARCHAR(255),
+                data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP
+            )""",
+            # Produtos
             """CREATE TABLE IF NOT EXISTS products (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            store_id INT,
-            product_name_id INT,
-            category_id INT,
-            description_id INT,
-            preco DECIMAL(10, 2),
-            stock INT,
-            FOREIGN KEY (store_id) REFERENCES stores(id),
-            FOREIGN KEY (product_name_id) REFERENCES product_names(id),
-            FOREIGN KEY (category_id) REFERENCES categories(id),
-            FOREIGN KEY (description_id) REFERENCES descriptions(id),
-            UNIQUE KEY unique_prod_store (store_id, product_name_id)
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                store_id INT,
+                product_name_id INT,
+                category_id INT,
+                description_id INT,
+                preco DECIMAL(10, 2),
+                stock INT,
+                FOREIGN KEY (store_id) REFERENCES stores(id),
+                FOREIGN KEY (product_name_id) REFERENCES product_names(id),
+                FOREIGN KEY (category_id) REFERENCES categories(id),
+                FOREIGN KEY (description_id) REFERENCES descriptions(id),
+                UNIQUE KEY unique_prod_store (store_id, product_name_id)
             )""",
-
-            # Pedidos / Compras (um pedido contém vários itens e está associado a uma loja)
+            # Pedidos
             """CREATE TABLE IF NOT EXISTS orders (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            buyer_user_id INT,
-            store_id INT,
-            seller_user_id INT NULL,
-            status ENUM('pendente', 'concluida') DEFAULT 'pendente',
-            total_price DECIMAL(10,2) DEFAULT 0,
-            order_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (buyer_user_id) REFERENCES users(id),
-            FOREIGN KEY (store_id) REFERENCES stores(id),
-            FOREIGN KEY (seller_user_id) REFERENCES users(id)
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                buyer_user_id INT,
+                store_id INT,
+                seller_user_id INT NULL,
+                status ENUM('pendente', 'concluida') DEFAULT 'pendente',
+                total_price DECIMAL(10,2) DEFAULT 0,
+                order_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (buyer_user_id) REFERENCES users(id),
+                FOREIGN KEY (store_id) REFERENCES stores(id),
+                FOREIGN KEY (seller_user_id) REFERENCES users(id)
             )""",
-
-            # Não pode haver produtos iguais na mesma compra (order_id, product_id) deve ser único
+            # Itens do pedido
             """CREATE TABLE IF NOT EXISTS order_items (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            order_id INT,
-            product_id INT,
-            quantity INT,
-            unit_price DECIMAL(10,2),
-            FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
-            FOREIGN KEY (product_id) REFERENCES products(id),
-            UNIQUE KEY unique_product_per_order (order_id, product_id)
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                order_id INT,
+                product_id INT,
+                quantity INT,
+                unit_price DECIMAL(10,2),
+                FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+                FOREIGN KEY (product_id) REFERENCES products(id),
+                UNIQUE KEY unique_product_per_order (order_id, product_id)
             )""",
         ]
-
         if self.cursor is None:
             if self.conn is not None:
                 self.cursor = self.conn.cursor(dictionary=True)
             else:
                 raise Exception("Database connection is not established.")
-
         for querie in queries:
             self.cursor.execute(querie)
         if self.conn:
