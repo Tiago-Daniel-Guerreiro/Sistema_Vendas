@@ -621,3 +621,14 @@ class Admin(Vendedor):
         except Exception as e:
             print(f"Erro ao listar utilizadores: {e}")
             return []
+    
+    @staticmethod
+    def registar(bd, username, password, store_id=None):
+        try:
+            # Admin NÃO deve validar nem associar loja
+            sql = "INSERT INTO users (username, password, cargo, store_id) VALUES (%s, %s, 'admin', NULL)"
+            bd.cursor.execute(sql, (username, password))
+            bd.conn.commit()
+            return Mensagem.UTILIZADOR_CRIADO
+        except:
+            return Mensagem.UTILIZADOR_JA_EXISTE

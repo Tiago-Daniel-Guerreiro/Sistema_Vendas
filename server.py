@@ -206,8 +206,13 @@ def Aplicar_Acao(bd, acao, parametros):
             loja_id = parametros.get('loja_id')
             if not username_func or not password_func or not tipo:
                 return Mensagem.CREDENCIAIS_INVALIDAS
-            if tipo == 'vendedor' and not loja_id:
-                return Mensagem.O_VENDEDOR_TEM_QUE_SER_ASSOCIADO_A_LOJA
+            if tipo == 'vendedor':
+                if not loja_id:
+                    return Mensagem.O_VENDEDOR_TEM_QUE_SER_ASSOCIADO_A_LOJA
+                try:
+                    loja_id = int(loja_id)
+                except (ValueError, TypeError):
+                    return Mensagem.CREDENCIAIS_INVALIDAS
             if tipo not in ['vendedor', 'admin']:
                 return Mensagem.CARGO_INVALIDO
             try:

@@ -399,9 +399,13 @@ class ClienteVendas:
             return
         self.mostrar_cabecalho("Listar Produtos")
         # Listar lojas antes de pedir o ID
-        resposta_lojas = self.rede.enviar('listar_lojas')
+        resposta_lojas = self.rede.enviar('listar_lojas', self.utilizador)
         if resposta_lojas.get('ok'):
             lojas = resposta_lojas.get('resultado', [])
+            if not isinstance(lojas, list) or (lojas and not isinstance(lojas[0], dict)):
+                self.mostrar_erro(f"Erro ao carregar lojas: {lojas}")
+                self.pausar()
+                return
             if not lojas:
                 self.mostrar_erro("Nenhuma loja disponível.")
                 self.pausar()
@@ -447,13 +451,18 @@ class ClienteVendas:
         
         self.mostrar_cabecalho("Realizar Compra")
         
-        resposta_lojas = self.rede.enviar('listar_lojas')
+        resposta_lojas = self.rede.enviar('listar_lojas', self.utilizador)
         if not resposta_lojas.get('ok') or not resposta_lojas.get('resultado'):
             self.mostrar_erro("Erro ao carregar lojas.")
             self.pausar()
             return
         
         lojas = resposta_lojas.get('resultado', [])
+        if not isinstance(lojas, list) or (lojas and not isinstance(lojas[0], dict)):
+            self.mostrar_erro(f"Erro ao carregar lojas: {lojas}")
+            self.pausar()
+            return
+        
         print("\nLojas disponíveis:")
         for loja in lojas:
             print(f"  {loja['id']}. {loja['nome']} - {loja['localizacao']}")
@@ -648,9 +657,13 @@ class ClienteVendas:
         preco = self.ler_texto("Preço:")
         stock = self.ler_texto("Stock:")
         # Listar lojas para escolher
-        resposta_lojas = self.rede.enviar('listar_lojas')
+        resposta_lojas = self.rede.enviar('listar_lojas', self.utilizador)
         if resposta_lojas.get('ok'):
             lojas = resposta_lojas.get('resultado', [])
+            if not isinstance(lojas, list) or (lojas and not isinstance(lojas[0], dict)):
+                self.mostrar_erro(f"Erro ao carregar lojas: {lojas}")
+                self.pausar()
+                return
             if not lojas:
                 self.mostrar_erro("Nenhuma loja disponível. Crie uma loja primeiro.")
                 self.pausar()
@@ -822,10 +835,13 @@ class ClienteVendas:
         tipo = self.ler_texto("Tipo (admin/vendedor):")
         loja_id = ""
         if tipo == 'vendedor':
-            # Listar lojas antes de pedir o ID
-            resposta_lojas = self.rede.enviar('listar_lojas')
+            resposta_lojas = self.rede.enviar('listar_lojas', self.utilizador)
             if resposta_lojas.get('ok'):
                 lojas = resposta_lojas.get('resultado', [])
+                if not isinstance(lojas, list) or (lojas and not isinstance(lojas[0], dict)):
+                    self.mostrar_erro(f"Erro ao carregar lojas: {lojas}")
+                    self.pausar()
+                    return
                 if not lojas:
                     self.mostrar_erro("Nenhuma loja disponível para associar ao vendedor.")
                     self.pausar()
@@ -843,8 +859,10 @@ class ClienteVendas:
         parametros = {
             **self.utilizador,
             'username_func': utilizador, 'password_func': senha,
-            'tipo': tipo, 'loja_id': loja_id
+            'tipo': tipo
         }
+        if tipo == 'vendedor' and loja_id:
+            parametros['loja_id'] = loja_id
         resposta = self.rede.enviar('criar_funcionario', parametros)
         resultado = resposta.get('resultado')
         if resposta.get('ok') and resultado == 'UTILIZADOR_CRIADO':
@@ -954,9 +972,13 @@ class ClienteVendas:
         if not self.utilizador:
             return
         self.mostrar_cabecalho("Editar Loja")
-        resposta_lojas = self.rede.enviar('listar_lojas')
+        resposta_lojas = self.rede.enviar('listar_lojas', self.utilizador)
         if resposta_lojas.get('ok'):
             lojas = resposta_lojas.get('resultado', [])
+            if not isinstance(lojas, list) or (lojas and not isinstance(lojas[0], dict)):
+                self.mostrar_erro(f"Erro ao carregar lojas: {lojas}")
+                self.pausar()
+                return
             if not lojas:
                 self.mostrar_erro("Nenhuma loja disponível.")
                 self.pausar()
@@ -1000,10 +1022,13 @@ class ClienteVendas:
         if not self.utilizador:
             return
         self.mostrar_cabecalho("Remover Loja")
-        # Listar lojas
-        resposta_lojas = self.rede.enviar('listar_lojas')
+        resposta_lojas = self.rede.enviar('listar_lojas', self.utilizador)
         if resposta_lojas.get('ok'):
             lojas = resposta_lojas.get('resultado', [])
+            if not isinstance(lojas, list) or (lojas and not isinstance(lojas[0], dict)):
+                self.mostrar_erro(f"Erro ao carregar lojas: {lojas}")
+                self.pausar()
+                return
             if not lojas:
                 self.mostrar_erro("Nenhuma loja disponível.")
                 self.pausar()
@@ -1066,9 +1091,13 @@ class ClienteVendas:
             filtro_cargo = 'admin'
         elif opcao == '5':
             # Listar lojas primeiro
-            resposta_lojas = self.rede.enviar('listar_lojas')
+            resposta_lojas = self.rede.enviar('listar_lojas', self.utilizador)
             if resposta_lojas.get('ok'):
                 lojas = resposta_lojas.get('resultado', [])
+                if not isinstance(lojas, list) or (lojas and not isinstance(lojas[0], dict)):
+                    self.mostrar_erro(f"Erro ao carregar lojas: {lojas}")
+                    self.pausar()
+                    return
                 if not lojas:
                     self.mostrar_erro("Nenhuma loja disponível.")
                     self.pausar()
@@ -1139,7 +1168,7 @@ def run_Cliente(host='127.0.0.1', port=5000, debug = False):
         print(f"\n\n{Cores.ROXO}Programa encerrado pelo utilizador.{Cores.NORMAL}")
     except Exception as e:
         print(f"{Cores.VERMELHO}{Cores.NEGRITO}Erro fatal: {e}{Cores.NORMAL}")
-
+    input()
 def run(host='127.0.0.1', port=5000, debug = False):
     run_Cliente(host, port, debug)
     
