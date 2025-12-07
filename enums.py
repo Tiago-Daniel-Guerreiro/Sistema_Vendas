@@ -46,6 +46,8 @@ class Mensagem(Enum):
     PRODUTO_NAO_ENCONTRADO = 26
     ERRO_PROCESSAMENTO = 27
     ALERTA_STOCK_BAIXO = 28
+    COMANDO_NAO_ENCONTRADO = 29
+    PARAMETROS_INVALIDOS = 30
     
     def __str__(self):
         return self.name
