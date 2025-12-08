@@ -9,7 +9,6 @@ from cliente.controlador import (
     ControladorVendedor,
     ControladorAdministracao
 )
-
 from cliente.interface_cliente import Interface
 
 class AplicacaoCliente:
@@ -24,36 +23,56 @@ class AplicacaoCliente:
             self._processar_resposta_servidor
         )
 
-        # Os outros controladores recebem o genérico para reutilizar a sua funcionalidade.
+        # Os outros controladores recebem o genérico para reutilizar a funcionalidade.
         self.controlador_autenticacao = ControladorAutenticacao(self.rede, self.sessao)
         self.controlador_loja = ControladorLoja(self.controlador_generico)
         self.controlador_vendedor = ControladorVendedor(self.controlador_generico)
         self.controlador_administracao = ControladorAdministracao(self.controlador_generico)
 
     def verificar_conexao_servidor(self):
-        tentativas_maximas = 3
         consola.info("A verificar ligação com o servidor...")
+        
+        # Tenta conectar ao servidor
+        if not self.rede.conectar(tentativas_maximas=3):
+            consola.erro("Não foi possível estabelecer ligação com o servidor.")
+            return False
+        
+        # Envia ping para confirmar que o servidor está respondendo
+        resposta = self.rede.enviar_comando('ping')
 
-        for tentativa in range(tentativas_maximas):
-            resposta = self.rede.enviar_comando('ping')
-
-            if resposta is not None and resposta.get('ok') is True:
-                consola.sucesso("Ligação com o servidor estabelecida.")
-                return True
-
-            consola.aviso(
-                f"Falha ao ligar ao servidor. Tentando novamente... "
-                f"({tentativa + 1}/{tentativas_maximas})"
-            )
-            time.sleep(3)
-
-        consola.erro("Não foi possível estabelecer ligação com o servidor.")
+        if resposta is not None and resposta.get('ok') is True:
+            consola.sucesso("Ligação com o servidor estabelecida.")
+            return True
+        
+        consola.erro("Servidor não respondeu ao ping.")
         return False
 
     def _processar_resposta_servidor(self, resposta, info_comando):
         # Centraliza a lógica de validação de sucesso e exibição de resultados.
         if resposta is None:
             consola.erro("Resposta nula do servidor.")
+            return
+
+        # Verifica se precisa reconectar
+        if resposta.get('reconectar') is True:
+            consola.aviso("Conexão com o servidor foi perdida.")
+            
+            if self.rede.reconectar():
+                consola.sucesso("Reconectado ao servidor com sucesso!")
+                # Nota: A sessão pode ter sido perdida, o utilizador terá que fazer login novamente
+                if self.sessao.esta_logado():
+                    consola.aviso("A sua sessão pode ter expirado. Por favor, faça login novamente.")
+                    self.sessao.encerrar_sessao()
+            else:
+                consola.erro("Não foi possível reconectar ao servidor.")
+                consola.info("Será desconectado. Pressione ENTER para continuar.")
+                try:
+                    consola.pausar()
+                except (KeyboardInterrupt, EOFError):
+                    pass
+                # O menu principal irá detectar que não está logado e voltar ao menu de autenticação
+                if self.sessao.esta_logado():
+                    self.sessao.encerrar_sessao()
             return
 
         if resposta.get('ok') is False:
@@ -79,7 +98,9 @@ class AplicacaoCliente:
                 else:
                     consola.sucesso("Operação concluída com sucesso.")
             case list():
-                if len(resultado) > 0 and isinstance(resultado[0], dict):
+                if len(resultado) == 0:
+                    consola.aviso("Nenhum resultado encontrado.")
+                elif len(resultado) > 0 and isinstance(resultado[0], dict):
                     colunas = []
 
                     for chave in resultado[0].keys():
@@ -221,16 +242,20 @@ class AplicacaoCliente:
         if self.verificar_conexao_servidor() is False:
             return
 
-        while True:
-            if self.sessao.esta_logado() is False:
-                self.menu_nao_autenticado()
-
+        try:
+            while True:
                 if self.sessao.esta_logado() is False:
-                    break
-            else:
-                resultado = self.menu_principal()
-                if resultado is True:
-                    break
+                    self.menu_nao_autenticado()
+
+                    if self.sessao.esta_logado() is False:
+                        break
+                else:
+                    resultado = self.menu_principal()
+                    if resultado is True:
+                        break
+        finally:
+            # Garante que a conexão é fechada ao sair
+            self.rede.desconectar()
 
         consola.sucesso("Obrigado por usar o sistema!")
 

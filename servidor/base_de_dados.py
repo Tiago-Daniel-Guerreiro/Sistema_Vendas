@@ -3,6 +3,9 @@ from mysql.connector import Error
 import time
 import consola
 
+class ErroConexaoBD(Exception):
+    pass
+
 class GestorBaseDados:
     def __init__(self, host='localhost', utilizador='root', palavra_passe='', nome_banco='sistema_vendas', limpar_base_dados=False):
         # Configuração inicial para conexão (dicionário interno mantendo chaves em inglês exigidas pela biblioteca)
@@ -16,14 +19,14 @@ class GestorBaseDados:
         self.cursor = None
         self.__limpar_base_dados = limpar_base_dados
 
-    def conectar(self):
-        while True:
+    def conectar(self, tentativas_maximas=10):
+        tentativas = 0
+        while tentativas < tentativas_maximas:
+            tentativas += 1
             try:
-                # Garante que a Base de Dados existe antes de tentar ligar a ela
-                if self.verificar_criar_base_dados() is False:
-                    consola.aviso("Falha ao verificar/criar base de dados. Tentando novamente...")
-                    time.sleep(2)
-                    continue 
+                erro = self.verificar_criar_base_dados()
+                if erro is not None:
+                    raise ErroConexaoBD(erro)
 
                 # Adiciona a base de dados à configuração antes de conectar
                 self.configuracao['database'] = self.nome_banco
@@ -34,24 +37,31 @@ class GestorBaseDados:
                 
                 consola.sucesso(f"Conectado com sucesso a: {self.nome_banco}")
                 return True
-            except Error as erro:
-                mensagem_erro = str(erro)
-                
-                # Verifica se é erro de conexão (XAMPP não está ligado)
-                if "2003" in mensagem_erro or "refused" in mensagem_erro.lower() or "connect" in mensagem_erro.lower():
-                    consola.erro("\nNão foi possível conectar ao MySQL!\n")
-                    consola.erro("Certifique-se de que o XAMPP/MySQL está ligado.\n")
-                    consola.info("Passos para resolver:")
-                    consola.info("  1. Abra o XAMPP Control Panel")
-                    consola.info("  2. Clique em 'Start' ao lado de 'MySQL'")
-                    consola.info("  3. Aguarde até o status mudar para 'Running'")
-                    consola.info("  4. Tente novamente\n")
-                    consola.aviso("Tentando reconectar em 5 segundos...")
-                else:
-                    consola.erro(f"Erro ao conectar ao MySQL: {erro}. Tentando novamente em 5 segundos...")
-                
-                time.sleep(5)
+            except (Error, ErroConexaoBD) as erro:
+                self.exibir_erro_conexao(erro, tempo_espera_segundos=3)
         
+        # Se chegou aqui, excedeu as tentativas
+        consola.erro(f"\nFalha crítica: Não foi possível conectar após {tentativas_maximas} tentativas.")
+        raise ErroConexaoBD(f"Falha ao conectar após {tentativas_maximas} tentativas")
+    
+    def exibir_erro_conexao(self, erro, tempo_espera_segundos=5):
+        mensagem_erro = str(erro)
+        
+        # Verifica se é erro de conexão (XAMPP não está ligado)
+        if "2003" in mensagem_erro or "refused" in mensagem_erro.lower() or "connect" in mensagem_erro.lower():
+            consola.erro("\nNão foi possível conectar ao MySQL!\n")
+            consola.erro("Certifique-se de que o XAMPP/MySQL está ligado.\n")
+            consola.info("Passos para resolver:")
+            consola.info("  1. Abra o XAMPP Control Panel")
+            consola.info("  2. Clique em 'Start' ao lado de 'MySQL'")
+            consola.info("  3. Aguarde até o status mudar para 'Running'")
+            consola.info("  4. Tente novamente\n")
+        else:
+            consola.erro(f"Erro ao conectar ao MySQL: {erro}.")
+        if tempo_espera_segundos > 0:
+            consola.info(f"A tentar reconectar novamente em {tempo_espera_segundos} segundos...")
+            time.sleep(tempo_espera_segundos)   
+
     def verificar_criar_base_dados(self):
         try:
             # Conecta sem especificar BD para poder criar/apagar schemas
@@ -69,10 +79,9 @@ class GestorBaseDados:
 
             cursor_temporario.close()
             conexao_temporaria.close()
-            return True
+            return None
         except Error as erro:
-            consola.erro(f"Erro Crítico ao verificar BD: {erro}")
-            return False
+            return erro
 
     def criar_tabelas(self):
         # Lista de comandos SQL para criar a estrutura da base de dados.

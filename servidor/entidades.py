@@ -366,6 +366,20 @@ class Utilizador:
             self.bd.conexao.rollback()
             return Mensagem.ERRO_GENERICO
 
+    def verificar_senha(self, senha):
+        try:
+            self.bd.cursor.execute("SELECT palavra_passe FROM utilizadores WHERE id = %s", (self.id,))
+            resultado = self.bd.cursor.fetchone()
+            
+            if resultado is None:
+                return False
+            
+            # Compara a senha fornecida com a armazenada na base de dados
+            return resultado['palavra_passe'] == senha
+            
+        except mysql.connector.Error:
+            return False
+
     def editar_senha(self, nova_senha):
         if nova_senha is None or len(nova_senha) == 0:
             return Mensagem.PARAMETROS_INVALIDOS

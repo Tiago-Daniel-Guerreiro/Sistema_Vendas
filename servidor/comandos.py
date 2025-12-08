@@ -13,14 +13,7 @@ class GestorComandos:
         
         # Utilidades
         self.registar(Comando('ping', Acoes.ping, 'Retorna pong', None, 'utilidades', [Mensagem.PONG]))
-        
-        # A ação 'help' agora recebe o próprio gestor para poder listar os comandos
-        # Usamos uma função wrapper que recebe todos os argumentos mas apenas passa os que precisa
-        def help_action(gestor_comandos=None, utilizador_atual=None, **kwargs):
-            # Se ProcessadorComandos passou gestor_comandos, usa esse, caso contrário usa self
-            return Acoes.help(gestor_comandos=gestor_comandos or self, utilizador_atual=utilizador_atual)
-        
-        self.registar(Comando('help', help_action, 'Lista todos os comandos disponíveis', None, 'utilidades', [Mensagem.SUCESSO]))
+        self.registar(Comando('help', Acoes.help, 'Lista todos os comandos disponíveis', None, 'utilidades', [Mensagem.SUCESSO]))
         
         # Conta e Autenticação
         self.registar(Comando('autenticar', Acoes.autenticar, 'Autentica o utilizador', None, 'minha conta', [Mensagem.SUCESSO]))

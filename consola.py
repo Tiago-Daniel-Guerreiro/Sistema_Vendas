@@ -1,15 +1,30 @@
 import os
 import getpass
 import threading
-import time
-from readkeys import getkey
 from enums import Cores
 
-def limpar():
+def _executar_com_tratamento(funcao):
     try:
-        os.system('cls')
+        funcao()
     except (KeyboardInterrupt, EOFError):
         pass
+
+def _executar_com_retorno(funcao):
+    try:
+        return funcao()
+    except (KeyboardInterrupt, EOFError):
+        # Adiciona quebra de linha para não deixar texto na mesma linha (especialmente com getpass)
+        print()
+        return None
+
+def limpar():
+    if os.name == 'nt':
+        comando = 'cls'
+    else:
+        comando = 'clear'
+
+    pass
+#_executar_com_tratamento(lambda: os.system(comando))
 
 def formatar_estado_debug(valor, *mensagens):
     texto_true, texto_false = ("ativado", "desativado")
@@ -35,52 +50,42 @@ def mostrar_mensagem_rede_escola():
     print(f"\n{Cores.AMARELO}Solução sugerida:{Cores.NORMAL} Colocar o servidor em outro computador.", flush=True)
 
 def importante_destacado(mensagem):
-    try:
-        print(f"{Cores.ROXO}{Cores.NEGRITO}{mensagem}{Cores.NORMAL}", flush=True)
-    except (KeyboardInterrupt, EOFError):
-        pass
+    _executar_com_tratamento(lambda: print(f"{Cores.ROXO}{Cores.NEGRITO}{mensagem}{Cores.NORMAL}", flush=True))
 
 def importante(mensagem):
-    try:
-        print(f"{Cores.ROXO}{mensagem}{Cores.NORMAL}", flush=True)
-    except (KeyboardInterrupt, EOFError):
-        pass
+    _executar_com_tratamento(lambda: print(f"{Cores.ROXO}{mensagem}{Cores.NORMAL}", flush=True))
 
 def info(mensagem):
-    try:
-        print(f"{Cores.AZUL}{mensagem}{Cores.NORMAL}", flush=True)
-    except (KeyboardInterrupt, EOFError):
-        pass
+    _executar_com_tratamento(lambda: print(f"{Cores.AZUL}{mensagem}{Cores.NORMAL}", flush=True))
 
 def normal(mensagem):
-    try:
-        print(f"{mensagem}", flush=True)
-    except (KeyboardInterrupt, EOFError):
-        pass
+    _executar_com_tratamento(lambda: print(f"{mensagem}", flush=True))
+    
+def ciano(mensagem):
+    _executar_com_tratamento(lambda: print(f"{Cores.CIANO}{mensagem}{Cores.NORMAL}", flush=True))
 
 def sucesso(mensagem):
-    try:
-        print(f"{Cores.VERDE}{mensagem}{Cores.NORMAL}", flush=True)
-    except (KeyboardInterrupt, EOFError):
-        pass
+    _executar_com_tratamento(lambda: print(f"{Cores.VERDE}{mensagem}{Cores.NORMAL}", flush=True))
 
 def erro(mensagem):
-    try:
-        print(f"{Cores.VERMELHO}{mensagem}{Cores.NORMAL}", flush=True)
-    except (KeyboardInterrupt, EOFError):
-        pass
+    _executar_com_tratamento(lambda: print(f"{Cores.VERMELHO}{mensagem}{Cores.NORMAL}", flush=True))
 
 def aviso(mensagem):
     print(f"{Cores.AMARELO}{mensagem}{Cores.NORMAL}", flush=True)
 
 def pausar():
     try:
-        input(f"\n{Cores.CINZA}Pressione ENTER para continuar...{Cores.NORMAL}")
+        # usa getpass para não mostrar nada no console antes do utilizador pressionar ENTER
+        getpass.getpass(f"{Cores.CINZA}Pressione ENTER para continuar...{Cores.NORMAL}")
+        print(Cores.NORMAL, end='', flush=True)
     except (KeyboardInterrupt, EOFError):
-        pass
+        # Adiciona quebra de linha para não deixar texto na mesma linha
+        print()
+        # Relança a exceção para que o menu possa lidar com ela
+        raise
 
 def info_adicional(mensagem):
-    print(f"{Cores.CINZA}{mensagem}{Cores.NORMAL}", flush=True)
+    _executar_com_tratamento(lambda: print(f"{Cores.CINZA}{mensagem}{Cores.NORMAL}", flush=True))
 
 def adicionar_dois_pontos(mensagem):
     if not mensagem.endswith(':'):
@@ -106,43 +111,49 @@ def sim_ou_nao(mensagem, padrao=True):
                 
                 erro("Resposta inválida. Por favor, responda com 's' ou 'n'.")
 
-def ler_texto(mensagem, obrigatorio=True):
-    mensagem = adicionar_dois_pontos(mensagem)
-    while True:
-        try:
-            valor = input(f"{Cores.AZUL}{mensagem}{Cores.NORMAL} ").strip()
-            
-            if obrigatorio is True:
-                if len(valor) == 0:
-                    print(f"{Cores.VERMELHO}Este campo não pode estar vazio.{Cores.NORMAL}", flush=True)
-                    continue
-            
-            return valor
-        except (KeyboardInterrupt, EOFError):
-            raise
-
-def ler_senha(mensagem, validar=True):
-    mensagem = adicionar_dois_pontos(mensagem)
+def _ler_input(funcao_input, mensagem, obrigatorio=True, tentativas_max=0):
+    # Formata a mensagem apenas uma vez fora do loop
+    msg_formatada = f"{Cores.AZUL}{adicionar_dois_pontos(mensagem)}{Cores.NORMAL} "
+    
     tentativas = 0
+    tem_limite = tentativas_max > 0
+
     while True:
-        # O getpass esconde o input do utilizador na consola por segurança
-        valor = getpass.getpass(f"{Cores.AZUL}{mensagem}{Cores.NORMAL} ").strip()
+    
+        valor = _executar_com_retorno(lambda: funcao_input(msg_formatada).strip())
 
-        if validar is False:
-            return valor # Se não for preciso validar, permite retornar string vazia
+        # Se o input retornou None (KeyboardInterrupt), retorna None
+        if valor is None:
+            return None
         
-        if len(valor) == 0:
-            tentativas += 1
+        # Se tem valor (não vazio) OU não é obrigatório, retorna o valor
+        if valor or not obrigatorio:
+            return valor
 
-            if tentativas >= 3:
-                return None
-            
-            print(f"{Cores.VERMELHO}A senha não pode estar vazia. Tentativa {tentativas}/3.{Cores.NORMAL}", flush=True)
-            continue
+        # Campo Vazio e Obrigatório
+        tentativas += 1
 
-        return valor
+        # Verifica se excedeu o limite (se o limite existir)
+        if tem_limite and tentativas >= tentativas_max:
+            return None
 
-def exibir_menu(titulo, opcoes, texto_sair="Sair", funcao_sair=None, atalho_callback=None):    
+        # Exibe a mensagem de erro
+        if tem_limite: 
+            info_tentativa = f" ({tentativas}/{tentativas_max})" 
+        else:
+            info_tentativa = ""
+
+        msg_erro = f"{Cores.VERMELHO}Este campo não pode estar vazio.{info_tentativa}{Cores.NORMAL}"
+        
+        _executar_com_tratamento(lambda: print(msg_erro, flush=True))
+
+def ler_texto(mensagem, obrigatorio=True, tentativas=5):
+    return _ler_input(input, mensagem, obrigatorio, tentativas)
+
+def ler_senha(mensagem, validar=True, tentativas=3):
+    return _ler_input(getpass.getpass, mensagem, validar, tentativas)
+
+def exibir_menu(titulo, opcoes, texto_sair="Sair", funcao_sair=None, atalho_callback=None, loop_externo=False):
     # Inicia thread para monitorizar atalhos se houver callback
     thread_atalhos = None
     if atalho_callback is not None:
@@ -151,69 +162,56 @@ def exibir_menu(titulo, opcoes, texto_sair="Sair", funcao_sair=None, atalho_call
             daemon=True
         )
         thread_atalhos.start()
-    
+
     while True:
         try:
-            # Pausa antes de mostrar o menu
             pausar()
-            
-            try:
-                limpar()
-            except (KeyboardInterrupt, EOFError):
-                # Se Ctrl+C durante limpeza, sai do menu
-                raise
-            
+            limpar()
             importante_destacado(f"\n{titulo}")
 
-            if opcoes is None or len(opcoes) == 0:
+            if not opcoes:
                 aviso("Nenhuma opção disponível.")
                 return False
 
             for indice, (texto_opcao, _) in enumerate(opcoes, 1):
                 print(f"{Cores.AZUL}{indice}){Cores.NORMAL} {texto_opcao}", flush=True)
-
             print(f"{Cores.AZUL}0){Cores.NORMAL} {texto_sair}", flush=True)
 
-            try:
-                escolha = ler_texto("Escolha uma opcao", obrigatorio=False)
-            except (KeyboardInterrupt, EOFError):
-                # Ctrl+C ou EOF fecha o menu imediatamente, sem mensagem
-                return False
+            escolha = ler_texto("Escolha uma opção", obrigatorio=False)
             
-            # Se escolha está vazia, pede novamente
+            if escolha is None:
+                raise KeyboardInterrupt
+
             if len(escolha) == 0:
-                erro("Por favor, introduza um número válido.")
+                erro("Por favor, escolha uma opção.")
                 continue
 
             if not escolha.isdigit():
-                erro("Por favor, introduza um número válido.")
+                erro("Por favor, introduza uma opção válida.")
                 continue
 
             indice_escolhido = int(escolha)
 
             if indice_escolhido == 0:
-                # Opção de saída
                 if funcao_sair is not None:
                     resultado = funcao_sair()
                     if resultado is True:
                         return True
-                return False  # Sair do menu
+                return False
 
             if 1 <= indice_escolhido <= len(opcoes):
                 funcao_a_chamar = opcoes[indice_escolhido - 1][1]
-
                 try:
-                    # Se a função retornar True, significa que o menu deve ser fechado
                     resultado = funcao_a_chamar()
                     if resultado is True:
-                        return True  # Retorna True para indicar sucesso
-                    # Se retornar False ou None, continua no menu
+                        return True
+                    if loop_externo:
+                        return None
                 except KeyboardInterrupt:
-                    # Ctrl+C durante função volta ao menu
                     aviso("\nOperação cancelada.")
-                    continue
+                    if loop_externo:
+                        return None
             else:
                 erro("Opção inválida.")
-        
         except KeyboardInterrupt:
             raise

@@ -13,41 +13,50 @@ class Cores(Enum):
     CINZA = '\033[90m'
     NORMAL = '\033[0m'
     NEGRITO = '\033[1m'
+    INVISIVEL = '\033[08m' 
+    # Texto invisível para o "ENTER para continuar..." 
+    # Pois não queremos que o utilizador veja o texto
+    # E a tentativa de usar algo como readkeys não funcionou bem em todos os terminais
 
     def __str__(self):
         return self.value
     
+class Dependencia(Enum):
+    SERVIDOR = "servidor"
+    CLIENTE = "cliente"
+    AMBOS = "ambos"
+
 class Mensagem(Enum):
-    PONG = 0
-    SUCESSO = 1
-    ERRO_GENERICO = 2
-    UTILIZADOR_CRIADO = 4
-    UTILIZADOR_JA_EXISTE = 5
-    LOGIN_INVALIDO = 6
-    CREDENCIAIS_INVALIDAS = 7
-    PERMISSAO_NEGADA = 8
-    O_PERFIL_JA_E_ADMIN = 9
-    O_VENDEDOR_TEM_QUE_SER_ASSOCIADO_A_LOJA = 10
-    CARGO_INVALIDO = 11
-    REGISTRO_INDISPONIVEL = 12
-    LOJA_NAO_ENCONTRADA = 13
-    COMANDO_DESCONHECIDO = 14
-    ADICIONADO = 15
-    ERRO_DUPLICADO = 16
-    ATUALIZADO = 17
-    NAO_ENCONTRADO = 18
-    REMOVIDO = 19
-    ERRO_LOJA_OBRIGATORIA = 20
-    ERRO_PERMISSAO = 21
-    PENDENTE = 22
-    CONFIRMADA = 23
-    CONCLUIDA = 24
-    STOCK_INSUFICIENTE = 25
-    PRODUTO_NAO_ENCONTRADO = 26
-    ERRO_PROCESSAMENTO = 27
-    ALERTA_STOCK_BAIXO = 28
-    COMANDO_NAO_ENCONTRADO = 29
-    PARAMETROS_INVALIDOS = 30
+    PONG = "Pong"
+    SUCESSO = "Operação concluída com sucesso"
+    ERRO_GENERICO = "Ocorreu um erro inesperado"
+    UTILIZADOR_CRIADO = "Utilizador criado com sucesso"
+    UTILIZADOR_JA_EXISTE = "Este utilizador já existe"
+    LOGIN_INVALIDO = "Login inválido"
+    CREDENCIAIS_INVALIDAS = "Credenciais inválidas"
+    PERMISSAO_NEGADA = "Permissão negada"
+    O_PERFIL_JA_E_ADMIN = "O perfil já é administrador"
+    O_VENDEDOR_TEM_QUE_SER_ASSOCIADO_A_LOJA = "O vendedor tem que ser associado a uma loja"
+    CARGO_INVALIDO = "Cargo inválido"
+    REGISTRO_INDISPONIVEL = "Registo indisponível"
+    LOJA_NAO_ENCONTRADA = "Loja não encontrada"
+    COMANDO_DESCONHECIDO = "Comando desconhecido"
+    ADICIONADO = "Adicionado com sucesso"
+    ERRO_DUPLICADO = "Registo duplicado"
+    ATUALIZADO = "Atualizado com sucesso"
+    NAO_ENCONTRADO = "Não encontrado"
+    REMOVIDO = "Removido com sucesso"
+    ERRO_LOJA_OBRIGATORIA = "Loja obrigatória"
+    ERRO_PERMISSAO = "Erro de permissão"
+    PENDENTE = "Pendente"
+    CONFIRMADA = "Confirmada"
+    CONCLUIDA = "Concluída"
+    STOCK_INSUFICIENTE = "Stock insuficiente"
+    PRODUTO_NAO_ENCONTRADO = "Produto não encontrado"
+    ERRO_PROCESSAMENTO = "Erro no processamento"
+    ALERTA_STOCK_BAIXO = "Alerta: Stock baixo"
+    COMANDO_NAO_ENCONTRADO = "Comando não encontrado"
+    PARAMETROS_INVALIDOS = "Parâmetros inválidos"
     
     def __str__(self):
-        return self.name
+        return self.value

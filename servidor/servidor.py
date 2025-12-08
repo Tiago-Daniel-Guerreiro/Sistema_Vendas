@@ -2,10 +2,11 @@ import json
 import socketserver
 import threading
 import socket
+import select
 import os
 import time
 import warnings
-from servidor.base_de_dados import GestorBaseDados
+from servidor.base_de_dados import GestorBaseDados, ErroConexaoBD
 from enums import Mensagem, Cores
 from servidor.configuracao import ConfiguracaoServidor
 from servidor.comandos import ProcessadorComandos, gestor_comandos_global
@@ -33,7 +34,9 @@ def carregar_dados_exemplo():
         consola.info_adicional(f"Carregando SQL de: {caminho_sql}")
         
         bd = GestorBaseDados()
-        if not bd.conectar():
+        try:
+            bd.conectar()
+        except ErroConexaoBD:
             consola.erro("Erro ao conectar à base de dados.")
             return False
         
@@ -74,6 +77,9 @@ def carregar_dados_exemplo():
         return False
 
 class GestorPedidosTCP(socketserver.StreamRequestHandler):
+    # Flag de classe para sinalizar shutdown
+    servidor_encerrando = False
+    
     def _enviar_resposta(self, sucesso, resultado=None, erro=None):
         pacote_resposta = {'ok': sucesso}
         if resultado is not None:
@@ -93,9 +99,18 @@ class GestorPedidosTCP(socketserver.StreamRequestHandler):
 
     def _ler_pedido(self):
         try:
+            # Usa select para verificar se há dados disponíveis com timeout de 1 segundo
+            # Isso permite verificar a flag de shutdown periodicamente
+            pronto, _, _ = select.select([self.request], [], [], 1.0)
+            
+            if not pronto:
+                # Timeout - nenhum dado disponível ainda
+                return 'TIMEOUT'
+            
+            # Há dados disponíveis, agora podemos ler com segurança
             linha_bytes = self.rfile.readline()
             if not linha_bytes:
-                return None
+                return 'DESCONECTADO'
             
             dados = json.loads(linha_bytes.decode('utf-8'))
             
@@ -105,73 +120,104 @@ class GestorPedidosTCP(socketserver.StreamRequestHandler):
             if ConfiguracaoServidor.MODO_DEPURACAO is True:
                 consola.info_adicional(f"<< {dados}")
             return dados
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             self._enviar_resposta(False, erro='Formato JSON inválido.')
             return None
         except Exception as e:
-            self._enviar_resposta(False, erro=f'Erro de leitura: {e}')
-            return None
+            return 'DESCONECTADO'
 
     def handle(self):
-        pedido = self._ler_pedido()
-        if pedido is None:
-            return
-
-        acao = pedido.get('acao')
-        parametros = pedido.get('parametros', {})
-
+        # Não define timeout no socket - select() em _ler_pedido() cuida do timeout
+        # Isso evita o problema de "cannot read from timed out object"
+        
         gestor_bd = GestorBaseDados()
-        if gestor_bd.conectar() is False:
+        try:
+            gestor_bd.conectar()
+        except ErroConexaoBD:
             self._enviar_resposta(False, erro='Falha crítica na base de dados.')
             return
-
+        
         try:
-            resultado = ProcessadorComandos.processar_pedido(
-                gestor_bd,
-                gestor_comandos_global,
-                acao,
-                parametros
-            )
+            # Loop para processar múltiplos comandos na mesma conexão
+            while not GestorPedidosTCP.servidor_encerrando:
+                try:
+                    pedido = self._ler_pedido()
+                    
+                    # Timeout - continua aguardando
+                    if pedido == 'TIMEOUT':
+                        continue
+                    
+                    # Cliente fechou a conexão
+                    if pedido == 'DESCONECTADO' or pedido is None:
+                        break
+                    
+                    # pedido é um dict válido
+                    acao = pedido.get('acao')
+                    parametros = pedido.get('parametros', {})
 
-            comando = gestor_comandos_global.obter(acao)
-
-            if comando is None:
-                self._enviar_resposta(
-                    False,
-                    erro='Comando não encontrado.'
-                )
-                return
-
-            mensagens_sucesso = comando.mensagens_sucesso
-
-            if mensagens_sucesso is None:
-                mensagens_sucesso = []
-
-            match resultado:
-                # Caso em que o resultado é diretamente uma Mensagem
-                case Mensagem() as mensagem_resultado:
-                    if mensagem_resultado in mensagens_sucesso:
-                        self._enviar_resposta(True,resultado=str(mensagem_resultado))
-                    else:
-                        self._enviar_resposta(False,erro=str(mensagem_resultado))
-
-                # Caso em que o resultado é uma tupla (Mensagem, dados)
-                case (Mensagem() as mensagem_resultado, conteudo_resultado):
-                    if mensagem_resultado in mensagens_sucesso:
-                        self._enviar_resposta(
-                            True,
-                            resultado=conteudo_resultado
+                    try:
+                        resultado = ProcessadorComandos.processar_pedido(
+                            gestor_bd,
+                            gestor_comandos_global,
+                            acao,
+                            parametros
                         )
-                    else: # Mensagem de erro
-                        self._enviar_resposta(False, erro=str(mensagem_resultado))
 
-                # Qualquer outro tipo de resultado é considerado sucesso direto
-                case _:
-                    self._enviar_resposta(True, resultado=resultado)
+                        comando = gestor_comandos_global.obter(acao)
 
-        except Exception as e:
-            self._enviar_resposta(False, erro=f"Erro inesperado no servidor: {e}")
+                        if comando is None:
+                            self._enviar_resposta(
+                                False,
+                                erro='Comando não encontrado.'
+                            )
+                            continue
+
+                        mensagens_sucesso = comando.mensagens_sucesso
+
+                        if mensagens_sucesso is None:
+                            mensagens_sucesso = []
+
+                        match resultado:
+                            # Caso em que o resultado é diretamente uma Mensagem
+                            case Mensagem() as mensagem_resultado:
+                                if mensagem_resultado in mensagens_sucesso:
+                                    self._enviar_resposta(True,resultado=str(mensagem_resultado))
+                                else:
+                                    self._enviar_resposta(False,erro=str(mensagem_resultado))
+
+                            # Caso em que o resultado é uma tupla (Mensagem, dados)
+                            case (Mensagem() as mensagem_resultado, conteudo_resultado):
+                                if mensagem_resultado in mensagens_sucesso:
+                                    self._enviar_resposta(
+                                        True,
+                                        resultado=conteudo_resultado
+                                    )
+                                else: # Mensagem de erro
+                                    self._enviar_resposta(False, erro=str(mensagem_resultado))
+
+                            # Qualquer outro tipo de resultado é considerado sucesso direto
+                            case _:
+                                self._enviar_resposta(True, resultado=resultado)
+
+                    except Exception as e:
+                        self._enviar_resposta(False, erro=f"Erro inesperado no servidor: {e}")
+                        # Continua processando outros comandos mesmo após erro
+                
+                except socket.timeout:
+                    # Timeout - verifica flag de shutdown e continua aguardando
+                    continue
+                except (ConnectionResetError, BrokenPipeError):
+                    # Cliente desconectou abruptamente
+                    break
+                except KeyboardInterrupt:
+                    # Servidor está sendo encerrado
+                    raise  # Re-lança para o handler externo
+                except Exception:
+                    # Outro erro - fecha a conexão
+                    break
+                    
         finally:
+            # Fecha a conexão com o banco de dados ao finalizar
             if gestor_bd.conexao:
                 gestor_bd.conexao.close()
 
@@ -189,17 +235,7 @@ class UtilitariosServidor:
             consola.erro(f'Erro ao limpar base de dados: {e}')
 
     @staticmethod
-    def monitorizar_atalho(verificar_atalho_func, mensagem_info, mensagem_sucesso, acao, apenas_windows=True, modo_depuracao=False, sleep_apos_acao=0.5):
-        """
-        Método centralizado para monitorar atalhos de teclado.
-        verificar_atalho_func: função que retorna True quando o atalho é pressionado
-        mensagem_info: mensagem informativa exibida ao iniciar
-        mensagem_sucesso: mensagem exibida ao detetar o atalho
-        acao: função a executar quando o atalho é detetado
-        apenas_windows: se True, só executa em Windows
-        modo_depuracao: se True, só executa se MODO_DEPURACAO estiver ativo
-        sleep_apos_acao: tempo de espera após acionar o atalho
-        """
+    def monitorizar_atalho(verificar_atalho_func, mensagem_info, mensagem_sucesso, acao, apenas_windows=True, modo_depuracao=False, sleep_apos_acao=0.5): 
         if apenas_windows and os.name != 'nt':
             return
         if modo_depuracao and not ConfiguracaoServidor.MODO_DEPURACAO:
@@ -274,6 +310,23 @@ def executar_servidor(endereco, porta, depuracao=False, dados_exemplo_bd=False, 
     if UtilitariosServidor.verificar_porta_ocupada(endereco, porta):
         print(f'{Cores.VERMELHO}A porta {porta} já está em uso.{Cores.NORMAL}')
         return
+    
+    # Verificar conexão com a base de dados antes de iniciar o servidor
+    consola.info_adicional("A verificar conexão com a base de dados...")
+    bd_teste = GestorBaseDados()
+    try:
+        bd_teste.conectar()
+        if bd_teste.conexao:
+            bd_teste.conexao.close()
+    except ErroConexaoBD as e:
+        # O método conectar() já mostrou as mensagens de erro detalhadas
+        # via exibir_erro_conexao() durante as tentativas
+        consola.erro("\nServidor não pode iniciar sem conexão com a base de dados.")
+        try:
+            consola.pausar()
+        except (KeyboardInterrupt, EOFError):
+            pass
+        return
 
     # Se dados_exemplo_bd é True, carrega dados de exemplo
     if dados_exemplo_bd:
@@ -284,7 +337,7 @@ def executar_servidor(endereco, porta, depuracao=False, dados_exemplo_bd=False, 
         funcoes_atalhos = []
         if ConfiguracaoServidor.MODO_DEPURACAO:
             funcoes_atalhos.append(UtilitariosServidor.monitorizar_atalhos_depuracao)
-        funcoes_atalhos.append(UtilitariosServidor.monitorizar_shift_p)
+            funcoes_atalhos.append(UtilitariosServidor.monitorizar_shift_p)
 
     for func in funcoes_atalhos:
         threading.Thread(target=func, daemon=True).start()
@@ -312,9 +365,15 @@ def executar_servidor(endereco, porta, depuracao=False, dados_exemplo_bd=False, 
     finally:
         if 'servidor' in locals() and servidor:
             print(f"{Cores.AMARELO}A encerrar servidor...{Cores.NORMAL}")
+            # Sinaliza todas as threads para encerrarem
+            GestorPedidosTCP.servidor_encerrando = True
+            # Aguarda um pouco para threads detectarem a flag (select tem timeout de 1s)
+            time.sleep(1.5)
             servidor.shutdown()
             servidor.server_close()
-            time.sleep(0.5)
+            # Reseta o flag para próxima execução
+            GestorPedidosTCP.servidor_encerrando = False
+            print(f"{Cores.VERDE}Servidor encerrado com sucesso.{Cores.NORMAL}")
 
 def iniciar(endereco=None, porta=None, depuracao=False, dados_exemplo_bd=False):
     # Esconde avisos que podem ocorrer no shutdown do threading.

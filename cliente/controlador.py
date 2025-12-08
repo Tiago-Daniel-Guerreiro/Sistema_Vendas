@@ -1,5 +1,5 @@
 import consola
-from enums import Cores
+from enums import Cores, Mensagem
 from cliente.interface_cliente import Interface
 
 class ControladorGenerico:
@@ -7,6 +7,12 @@ class ControladorGenerico:
         self.rede = rede
         self.sessao = sessao
         self.processador_respostas = processador_respostas
+
+    def enviar_com_token(self, acao, parametros=None):
+        parametros_completos = self.sessao.obter_credenciais()
+        if parametros is not None:
+            parametros_completos.update(parametros)
+        return self.rede.enviar_comando(acao, parametros_completos)
 
     def executar_comando(self, nome_comando, parametros_predefinidos=None):
         info_comando = self.sessao.comandos_por_nome.get(nome_comando)
@@ -45,6 +51,12 @@ class ControladorAutenticacao:
     def __init__(self, rede, sessao):
         self.rede = rede
         self.sessao = sessao
+
+    def enviar_com_token(self, acao, parametros=None):
+        parametros_completos = self.sessao.obter_credenciais()
+        if parametros is not None:
+            parametros_completos.update(parametros)
+        return self.rede.enviar_comando(acao, parametros_completos)
 
     def _carregar_comandos_disponiveis(self, token_sessao):
         # Após autenticação, pede ao servidor a lista de comandos disponíveis
@@ -115,9 +127,22 @@ class ControladorAutenticacao:
 
         if resposta is None:
             consola.erro("Falha na comunicação com o servidor.")
-            return self.iniciar_sessao_manual(
-                utilizador_preenchido=utilizador_escolhido
-            )
+            return False
+        
+        # Verifica se precisa reconectar
+        if resposta.get('reconectar') is True:
+            consola.aviso("Conexão com o servidor foi perdida.")
+            
+            if self.rede.reconectar():
+                consola.sucesso("Reconectado ao servidor!")
+                consola.info("Por favor, tente fazer login novamente.")
+            else:
+                consola.erro("Não foi possível reconectar ao servidor.")
+                try:
+                    consola.pausar()
+                except (KeyboardInterrupt, EOFError):
+                    pass
+            return False
 
         if resposta.get('ok') is True:
             resultado = resposta.get('resultado', {})
@@ -141,6 +166,32 @@ class ControladorAutenticacao:
         return self.iniciar_sessao_manual(
             utilizador_preenchido=utilizador_escolhido
         )
+    
+    def _reautenticar(self, username, password):
+        resposta = self.rede.enviar_comando(
+            'autenticar',
+            {
+                'username': username,
+                'password': password
+            }
+        )
+        
+        if resposta is None or resposta.get('ok') is False:
+            return False
+        
+        resultado = resposta.get('resultado', {})
+        token_novo = resultado.get('token')
+        
+        self.sessao.iniciar_sessao(
+            username,
+            resultado.get('cargo'),
+            token_novo
+        )
+        
+        self.rede.guardar_token_local(username, token_novo)
+        self._carregar_comandos_disponiveis(token_novo)
+        
+        return True
 
     def iniciar_sessao_manual(self, utilizador_preenchido=None):
         if utilizador_preenchido is None or len(utilizador_preenchido) == 0:
@@ -165,6 +216,22 @@ class ControladorAutenticacao:
         if resposta is None:
             consola.erro("Falha na comunicação com o servidor.")
             return False
+        
+        # Verifica se precisa reconectar
+        if resposta.get('reconectar') is True:
+            consola.aviso("Conexão com o servidor foi perdida.")
+            
+            if self.rede.reconectar():
+                consola.sucesso("Reconectado ao servidor!")
+                consola.info("Por favor, tente fazer login novamente.")
+            else:
+                consola.erro("Não foi possível reconectar ao servidor.")
+                consola.info("Pressione ENTER para voltar ao menu principal.")
+                try:
+                    consola.pausar()
+                except (KeyboardInterrupt, EOFError):
+                    pass
+            return False
 
         if resposta.get('ok') is True:
             resultado = resposta.get('resultado', {})
@@ -187,16 +254,15 @@ class ControladorAutenticacao:
         erro = resposta.get('erro', 'Erro desconhecido')
         
         # Traduzir códigos de erro comuns
-        if erro == 'CREDENCIAIS_INVALIDAS':
+        if erro == str(Mensagem.CREDENCIAIS_INVALIDAS):
             consola.erro("Utilizador ou senha incorretos.")
-        elif erro == 'LOGIN_INVALIDO':
+        elif erro == str(Mensagem.LOGIN_INVALIDO):
             consola.erro("Credenciais inválidas.")
-        elif erro == 'ERRO_GENERICO':
+        elif erro == str(Mensagem.ERRO_GENERICO):
             consola.erro("Credenciais inválidas. Verifique o utilizador e senha.")
         else:
             consola.erro(f"Falha no login: {erro}")
         
-        return False
         return False
 
     def registar_conta(self):
@@ -237,7 +303,7 @@ class ControladorAutenticacao:
             erro = resposta.get('erro', 'Erro desconhecido')
             
             # Traduzir códigos de erro comuns
-            if erro == 'UTILIZADOR_JA_EXISTE':
+            if erro == str(Mensagem.UTILIZADOR_JA_EXISTE):
                 consola.erro("Esse nome de utilizador já está em uso.")
             else:
                 consola.erro(f"Falha no registo: {erro}")
@@ -259,37 +325,47 @@ class ControladorAutenticacao:
             consola.erro("Username não pode estar vazio.")
             return
         
+        # Pedir senha para confirmar
+        senha_atual = consola.ler_senha("Senha atual (para confirmar):")
+        
+        if senha_atual is None:
+            consola.info("Operação cancelada.")
+            return
+        
         # Confirmação
         confirmacao = consola.ler_texto(
             f"Alterar username para '{novo_username}'? (s/n):"
         )
         
-        if confirmacao.lower() != 's':
+        if not confirmacao or confirmacao.lower() != 's':
             consola.info("Operação cancelada.")
             return
         
-        resposta = self.rede.enviar_comando(
+        resposta = self.enviar_com_token(
             'editar_nome_utilizador',
-            {
-                'token_sessao': self.sessao.token_sessao,
-                'novo_username': novo_username
-            }
+            {'novo_username': novo_username}
         )
         
         if resposta is not None and resposta.get('ok') is True:
             resultado = resposta.get('resultado', '')
             
-            if resultado == 'ATUALIZADO':
+            if resultado == str(Mensagem.ATUALIZADO):
                 consola.sucesso("Username atualizado com sucesso!")
-                consola.info(
-                    "A encerrar sessão. Faça login com o novo username."
-                )
-                # Forçar logout e voltar ao menu de autenticação
+                consola.info("A reautenticar com novo username...")
+                
+                # Remover token antigo
                 self.rede.remover_token_local(self.sessao.nome_utilizador)
-                self.sessao.encerrar_sessao()
-                return False  # Volta ao menu de autenticação
+                
+                # Tentar reautenticar
+                if self._reautenticar(novo_username, senha_atual):
+                    consola.sucesso(f"Sessão reiniciada como {novo_username}!")
+                    return True  # Mantém no menu
+                else:
+                    consola.erro("Erro ao reautenticar. Faça login manualmente.")
+                    self.sessao.encerrar_sessao()
+                    return False  # Volta ao menu de autenticação
             else:
-                if resultado == 'UTILIZADOR_JA_EXISTE':
+                if resultado == str(Mensagem.UTILIZADOR_JA_EXISTE):
                     consola.erro("Username já está em uso por outro utilizador.")
                 else:
                     consola.erro(f"{resultado}")
@@ -300,6 +376,11 @@ class ControladorAutenticacao:
 
     def alterar_senha(self):
         Interface.mostrar_cabecalho("Alterar Senha")
+        
+        senha_atual = consola.ler_senha("Senha Atual:")
+        
+        if senha_atual is None:
+            return
         
         nova_senha = consola.ler_senha("Nova Senha:")
         
@@ -315,21 +396,29 @@ class ControladorAutenticacao:
             consola.erro("As senhas não coincidem.")
             return
         
-        resposta = self.rede.enviar_comando(
+        resposta = self.enviar_com_token(
             'editar_senha',
             {
-                'token_sessao': self.sessao.token_sessao,
+                'senha_atual': senha_atual,
                 'nova_senha': nova_senha
             }
         )
         
         if resposta is not None and resposta.get('ok') is True:
             consola.sucesso("Senha alterada com sucesso!")
-            consola.info("A encerrar sessão por segurança. Faça login com a nova senha.")
-            # Forçar logout e voltar ao menu de autenticação
-            self.rede.remover_token_local(self.sessao.nome_utilizador)
-            self.sessao.encerrar_sessao()
-            return False  # Volta ao menu de autenticação
+            consola.info("A reautenticar com nova senha...")
+            
+            username = self.sessao.nome_utilizador
+            self.rede.remover_token_local(username)
+            
+            # Tentar reautenticar
+            if self._reautenticar(username, nova_senha):
+                consola.sucesso("Sessão reiniciada com sucesso!")
+                return True  # Mantém no menu
+            else:
+                consola.erro("Erro ao reautenticar. Faça login manualmente.")
+                self.sessao.encerrar_sessao()
+                return False  # Volta ao menu de autenticação
         else:
             consola.erro(
                 f"Erro ao alterar senha: {resposta.get('erro')}"
@@ -343,18 +432,15 @@ class ControladorAutenticacao:
         if chave is None:
             return
         
-        resposta = self.rede.enviar_comando(
+        resposta = self.enviar_com_token(
             'promover_para_admin',
-            {
-                'token_sessao': self.sessao.token_sessao,
-                'chave': chave
-            }
+            {'chave': chave}
         )
         
         if resposta is not None and resposta.get('ok') is True:
             resultado = resposta.get('resultado', '')
             
-            if resultado == 'SUCESSO':
+            if resultado == str(Mensagem.SUCESSO):
                 consola.sucesso(
                     "Promovido a Admin! "
                     "A encerrar sessão para atualizar permissões..."
@@ -393,20 +479,17 @@ class ControladorAutenticacao:
             consola.aviso("Confirmação incorreta. Operação cancelada.")
             return
         
-        resposta = self.rede.enviar_comando(
-            'apagar_utilizador',
-            {'token_sessao': self.sessao.token_sessao}
-        )
+        resposta = self.enviar_com_token('apagar_utilizador')
         
         if resposta is not None and resposta.get('ok') is True:
             resultado = resposta.get('resultado')
             
-            if resultado == 'REMOVIDO':
+            if resultado == str(Mensagem.REMOVIDO):
                 consola.sucesso("Conta apagada com sucesso!")
                 self.rede.remover_token_local(self.sessao.nome_utilizador)
                 self.sessao.encerrar_sessao()
                 return True  # Fecha o menu
-            elif resultado == 'NAO_PERMITIDO':
+            elif resultado == str(Mensagem.PERMISSAO_NEGADA):
                 consola.erro(
                     "Por motivos de segurança essa ação não pode ser "
                     "efetuada agora. Solicite a um administrador para "
@@ -574,19 +657,14 @@ class ControladorLoja:
 
         loja_id = consola.ler_texto("\nID da Loja para comprar:")
         
-        if not loja_id.isdigit():
+        if not loja_id or not loja_id.isdigit():
             consola.erro("ID da loja inválido.")
             return
 
         # 3. Listar produtos da loja
-        parametros_produtos = {
-            'token_sessao': self.controlador_generico.sessao.token_sessao,
-            'store_id': loja_id
-        }
-
-        resposta_produtos = self.controlador_generico.rede.enviar_comando(
+        resposta_produtos = self.controlador_generico.enviar_com_token(
             'listar_produtos',
-            parametros_produtos
+            {'store_id': loja_id}
         )
 
         if resposta_produtos is None or resposta_produtos.get('ok') is False:
@@ -615,7 +693,7 @@ class ControladorLoja:
                 obrigatorio=False
             )
 
-            if len(id_produto) == 0:
+            if not id_produto or len(id_produto) == 0:
                 break
 
             if not id_produto.isdigit():
@@ -624,7 +702,7 @@ class ControladorLoja:
 
             quantidade = consola.ler_texto("Quantidade:")
 
-            if not quantidade.isdigit() or int(quantidade) <= 0:
+            if not quantidade or not quantidade.isdigit() or int(quantidade) <= 0:
                 consola.erro("Quantidade inválida.")
                 continue
 
@@ -941,7 +1019,7 @@ class ControladorAdministracao:
         produto_id = consola.ler_texto("\nID Produto a remover:")
         confirmacao = consola.ler_texto("Tem a certeza? (s/n):")
         
-        if confirmacao.lower() != 's':
+        if not confirmacao or confirmacao.lower() != 's':
             consola.info("Operação cancelada.")
             return
         
@@ -1060,7 +1138,7 @@ class ControladorAdministracao:
             "Tem certeza? Esta ação não pode ser desfeita. (s/n):"
         )
         
-        if confirmacao.lower() != 's':
+        if not confirmacao or confirmacao.lower() != 's':
             consola.info("Operação cancelada.")
             return
         

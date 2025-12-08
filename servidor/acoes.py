@@ -32,11 +32,43 @@ class Acoes:
     def autenticar(base_de_dados=None, parametros=None, **kwargs):        
         if parametros is None:
             parametros = {}
+        
+        if base_de_dados is None:
+            return Mensagem.ERRO_GENERICO
 
         username = parametros.get('username')
         password = parametros.get('password')
+        token_sessao = parametros.get('token_sessao')
 
-        # Se foram fornecidas credenciais, tenta autenticar
+        # Autenticação por token (sessão existente)
+        if token_sessao is not None:
+            if not Sessao.validar_token(base_de_dados, token_sessao):
+                return Mensagem.CREDENCIAIS_INVALIDAS
+            
+            # Busca o utilizador associado ao token
+            base_de_dados.cursor.execute("SELECT nome_utilizador FROM sessoes WHERE token = %s", (token_sessao,))
+            resultado_sessao = base_de_dados.cursor.fetchone()
+            
+            if resultado_sessao is None:
+                return Mensagem.CREDENCIAIS_INVALIDAS
+            
+            nome_utilizador_token = resultado_sessao['nome_utilizador']
+            
+            # Busca o utilizador completo
+            base_de_dados.cursor.execute("SELECT id, cargo FROM utilizadores WHERE nome_utilizador = %s", (nome_utilizador_token,))
+            dados_utilizador = base_de_dados.cursor.fetchone()
+            
+            if dados_utilizador is None:
+                return Mensagem.CREDENCIAIS_INVALIDAS
+            
+            # Retorna informações da sessão válida
+            return {
+                'cargo': dados_utilizador['cargo'],
+                'token': token_sessao,
+                'username': nome_utilizador_token
+            }
+
+        # Autenticação por username e password (novo login)
         if username is not None and password is not None:
             resultado = Utilizador.autenticar(base_de_dados, username, password)
 
@@ -71,7 +103,16 @@ class Acoes:
 
     @staticmethod
     def editar_senha(utilizador_atual, parametros):
+        senha_atual = parametros.get('senha_atual')
         nova_senha = parametros.get('nova_senha')
+        
+        # Verifica se a senha atual foi fornecida e está correta
+        if senha_atual is None:
+            return Mensagem.PARAMETROS_INVALIDOS
+        
+        if not utilizador_atual.verificar_senha(senha_atual):
+            return Mensagem.CREDENCIAIS_INVALIDAS
+        
         return utilizador_atual.editar_senha(nova_senha)
     
     @staticmethod
