@@ -23,8 +23,7 @@ def limpar():
     else:
         comando = 'clear'
 
-    pass
-#_executar_com_tratamento(lambda: os.system(comando))
+    _executar_com_tratamento(lambda: os.system(comando))
 
 def formatar_estado_debug(valor, *mensagens):
     texto_true, texto_false = ("ativado", "desativado")
