@@ -139,12 +139,12 @@ Os atalhos são monitorizados em threads paralelas.
 
 ### 🔧 Desafios Técnicos e Soluções
 
-| Desafio | Problema | Solução |
-|---------|----------|---------|
-| **Sincronização de Threads** | Múltiplas threads a aceder à BD simultaneamente | Cada thread cria a sua própria conexão MySQL |
-| **Gestão de Sessões** | Manter utilizadores autenticados sem login repetido | Tokens únicos com expiração, guardados localmente em JSON |
-| **Herança de Permissões** | Admin deve poder executar todas as ações de níveis inferiores | Hierarquia de herança onde cada classe herda da anterior |
-| **Bugs de Credenciais** | Alguns comandos não enviavam o token de sessão | Refatoração para incluir token automaticamente em todos os pedidos |
+| Desafio                      | Problema                                                      | Solução                                                            |
+| ---------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
+| **Sincronização de Threads** | Múltiplas threads a aceder à BD simultaneamente               | Cada thread cria a sua própria conexão MySQL                       |
+| **Gestão de Sessões**        | Manter utilizadores autenticados sem login repetido           | Tokens únicos com expiração, guardados localmente em JSON          |
+| **Herança de Permissões**    | Admin deve poder executar todas as ações de níveis inferiores | Hierarquia de herança onde cada classe herda da anterior           |
+| **Bugs de Credenciais**      | Alguns comandos não enviavam o token de sessão                | Refatoração para incluir token automaticamente em todos os pedidos |
 
 ## ⏱️ Desenvolvimento Pós-Apresentação
 
@@ -158,23 +158,23 @@ Após a apresentação oficial, tomei a decisão de **continuar o desenvolviment
 
 ### 📈 Evolução da Arquitetura
 
-| Fase | Estado | Características |
-|------|--------|-----------------|
-| **Apresentação** | Código monolítico | Funções longas, lógica misturada com interface |
+| Fase                 | Estado               | Características                                                     |
+| -------------------- | -------------------- | ------------------------------------------------------------------- |
+| **Apresentação**     | Código monolítico    | Funções longas, lógica misturada com interface                      |
 | **Pós-Apresentação** | Refatoração completa | Arquitetura modular, padrões aplicados, responsabilidades separadas |
 
 ### 📊 Estado na Apresentação vs Final
 
-| Funcionalidade | Apresentação | Versão Final |
-|--------|--------------|--------------|
-| Servidor funcional | ✅ | ✅ |
-| Autenticação básica | ✅ | ✅ Tokens + persistência + expiração |
-| Funcionalidades essenciais | ✅ | ✅ 30+ comandos |
-| Arquitetura | ⚠️ Monolítica | ✅ Modular com padrões |
-| Tratamento de erros | ⚠️ Inconsistente | ✅ Centralizado com enums e help melhorado |
-| Funcionalidades secundárias | ⚠️ Incompletas | ✅ Todas implementadas |
-| Bugs nas requisições | ❌ Credenciais em falta | ✅ Corrigido |
-| Documentação | ⚠️ Incompleta | ✅ Completa |
+| Funcionalidade              | Apresentação            | Versão Final                              |
+| --------------------------- | ----------------------- | ----------------------------------------- |
+| Servidor funcional          | ✅                      | ✅                                        |
+| Autenticação básica         | ✅                      | ✅ Tokens + persistência + expiração      |
+| Funcionalidades essenciais  | ✅                      | ✅ 30+ comandos                           |
+| Arquitetura                 | ⚠️ Monolítica           | ✅ Modular com padrões                    |
+| Tratamento de erros         | ⚠️ Inconsistente        | ✅ Centralizado com enums e help melhorado|
+| Funcionalidades secundárias | ⚠️ Incompletas          | ✅ Todas implementadas                    |
+| Bugs nas requisições        | ❌ Credenciais em falta | ✅ Corrigido                              |
+| Documentação                | ⚠️ Incompleta           | ✅ Completa                               |
 
 ## 👨‍💼 O Meu Papel
 
@@ -245,12 +245,12 @@ A aplicação está disponível como executável único, gerado com PyInstaller.
 
 ## 🔮 Próximos Passos
 
-**Curto Prazo:**
+## Curto Prazo
 
 - Testes automatizados
 - encriptação de senhas com bcrypt
 
-**Médio Prazo:**
+## Médio Prazo
 
 - Interface gráfica (Tkinter)
 - comunicação encriptada
