@@ -245,12 +245,12 @@ A aplicação está disponível como executável único, gerado com PyInstaller.
 
 ## 🔮 Próximos Passos
 
-## Curto Prazo
+### Curto Prazo
 
 - Testes automatizados
 - encriptação de senhas com bcrypt
 
-## Médio Prazo
+### Médio Prazo
 
 - Interface gráfica (Tkinter)
 - comunicação encriptada
